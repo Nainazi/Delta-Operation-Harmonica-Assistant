@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# 测试与临时文件
+_test*.py
+_ui_shot.png
+_shot.ps1
+
+# IDE
+.vscode/
+.idea/
+
+# 环境
+.env
+.env.local
+.env.*
+
+# 系统
+Thumbs.db
+.DS_Store

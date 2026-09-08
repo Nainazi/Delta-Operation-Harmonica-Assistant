@@ -1,0 +1,17 @@
+# 佐拉口琴谱伴 - 运行依赖
+# B 模式（自动注入）需要 pydirectinput 与 keyboard
+# E 模式（G HUB 导出）仅用标准库即可
+# C 模式（手动辅助）用 customtkinter/tkinter
+# PyInstaller 打包用（开发机安装即可，运行环境不需要）
+# pyinstaller>=6.0
+
+# 现代暗色主题 UI 组件库
+customtkinter>=6.0
+
+# DirectInput 输入注入，游戏兼容性优于 pyautogui
+pydirectinput>=1.0.6
+
+# 全局热键注册（开始/停止）
+keyboard>=0.13.5
+
+# tkinter 随 Python 自带，无需单独安装
