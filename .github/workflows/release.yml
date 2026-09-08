@@ -13,17 +13,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare ASCII asset name
+        run: |
+          set -e
+          src=$(ls dist/*.exe | head -n 1)
+          cp "$src" "dist/ZoraHarmonica-${GITHUB_REF_NAME}.exe"
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: 佐拉口琴谱伴 ${{ github.ref_name }}
           body: |
             ## 下载
-            下载下方 **佐拉口琴谱伴.exe** 即可使用。
+            下载下方 **ZoraHarmonica-${{ github.ref_name }}.exe**（佐拉口琴谱伴）即可使用。
 
             ## 说明
             - 版本：`${{ github.ref_name }}`
             - 推荐优先使用「手动辅助」模式（零风险）
             - 源码与 `build/`、`dist/` 已包含在仓库中
-          files: dist/*.exe
+          files: dist/ZoraHarmonica-*.exe
           fail_on_unmatched_files: true
