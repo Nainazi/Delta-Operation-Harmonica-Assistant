@@ -42,22 +42,40 @@ class ResolveBackendTests(unittest.TestCase):
         be, note = resolve_backend(InputConfig(backend="null"), require_real=False)
         self.assertEqual(be.name, "null")
         self.assertIsInstance(be, NullBackend)
-        self.assertIsNone(note)
+        self.assertIn("null", (note or "").lower())
 
     def test_null_require_real_raises(self) -> None:
         with self.assertRaises(BackendUnavailable) as ctx:
             resolve_backend(InputConfig(backend="null"), require_real=True)
         self.assertIn("null", str(ctx.exception).lower())
 
-    def test_create_backend_require_real_null_raises(self) -> None:
-        with self.assertRaises(BackendUnavailable):
-            create_backend(InputConfig(backend="null"), require_real=True)
+    def test_create_backend_null_sets_last_error(self) -> None:
+        be = create_backend(InputConfig(backend="null"))
+        self.assertEqual(be.name, "null")
+        self.assertIsInstance(be, NullBackend)
+        from harmonica import input_backend as m
+        self.assertIsNotNone(m.LAST_BACKEND_ERROR)
+        self.assertIn("null", (m.LAST_BACKEND_ERROR or "").lower())
 
     def test_unknown_require_real_raises(self) -> None:
-        with self.assertRaises(BackendUnavailable):
-            resolve_backend(InputConfig(backend="not-a-backend"), require_real=True)
+        def boom(_name: str):
+            raise ImportError("missing")
 
-    def test_require_real_does_not_return_null_when_both_fail(self) -> None:
+        with patch("harmonica.input_backend._try_construct", side_effect=boom):
+            with self.assertRaises(BackendUnavailable):
+                resolve_backend(InputConfig(backend="not-a-backend"), require_real=True)
+
+    def test_create_backend_both_fail_returns_null_and_error(self) -> None:
+        def boom(_name: str):
+            raise ImportError("missing lib")
+
+        with patch("harmonica.input_backend._try_construct", side_effect=boom):
+            be = create_backend(InputConfig(backend="pydirectinput"))
+        self.assertEqual(be.name, "null")
+        from harmonica import input_backend as m
+        self.assertIn("pydirectinput", m.LAST_BACKEND_ERROR or "")
+
+    def test_require_real_does_not_play_null_when_both_fail(self) -> None:
         def boom(_name: str):
             raise ImportError("missing lib")
 
@@ -76,12 +94,13 @@ class ResolveBackendTests(unittest.TestCase):
             raise AssertionError(name)
 
         with patch("harmonica.input_backend._try_construct", side_effect=construct):
-            be, note = resolve_backend(
-                InputConfig(backend="pydirectinput"), require_real=True)
+            be = create_backend(InputConfig(backend="pydirectinput"))
         self.assertEqual(be.name, "keyboard_ctypes")
         self.assertNotEqual(be.name, "null")
-        self.assertIsNotNone(note)
-        self.assertIn("keyboard_ctypes", note or "")
+        self.assertIsNotNone(be.warning)
+        self.assertIn("keyboard_ctypes", be.warning or "")
+        from harmonica import input_backend as m
+        self.assertIsNone(m.LAST_BACKEND_ERROR)
 
     def test_keyboard_alias(self) -> None:
         def construct(name: str):

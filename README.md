@@ -8,10 +8,11 @@
 ## 更新日志
 
 ### v1.0.5
-- **自动注入修复**：B 模式不再在输入库缺失时静默落到空后端（看起来在演奏、实际不发 z–m / 中键）。缺库或设置为 `null` 时弹窗报错并拒绝开始。
-- 首选后端失败时自动尝试另一种真实后端，并在状态栏写明实际使用的后端名。
-- 关闭 pydirectinput 角落 FAILSAFE（光标在屏幕角时不再中断）；注入异常会提示而不是线程里默默结束。
-- 演奏页模式单选把选中值直接交给开始逻辑，避免 UI 拆分后 mode 与按钮 handler 不同步。
+- **自动注入修复**：B 模式不再在缺库时静默落到空后端（看起来在演奏、实际不发 z–m / 中键）。首选 `pydirectinput`，失败则回退 `keyboard_ctypes`。
+- **一键安装**：源码运行若仍缺库，弹出依赖说明（含失败原因）和「一键安装」按钮（`python -m pip install pydirectinput keyboard`），装完自动重试；取消则不开始注入。
+- 关闭 pydirectinput 角落 FAILSAFE；注入异常会提示而不是线程里默默结束。
+- **曲库**：内置练习谱「See You Again（1.5倍速梗）」`harmonica/scores/see_you_again_1p5x.txt`。
+- **发行**：GitHub tag `v*` 在 `windows-latest` 上用 PyInstaller 打包并上传 `ZoraHarmonica-<tag>.exe`。
 
 ### v1.0.4
 - **代码结构**：将原 `gui.py` 拆分为 `harmonica/ui/`（app / play / library / guide / settings / hud / wizard），入口 `harmonica.gui:App` 保持兼容。
@@ -104,7 +105,7 @@
 A: 口琴只有基础音区（约一个半八度），带 `^`（高八度）或 `,`（低八度）的音符会吹成基础音区，这是道具本身限制。底部警告区会标出超范围音符，你需要换调或改编。
 
 **Q: B 模式按了没反应？**
-A: 状态栏应显示 `B 模式播放中（pydirectinput）` 或 `keyboard_ctypes`。若弹出「输入后端不可用」，先 `pip install pydirectinput keyboard`，或到「设置」改成 `keyboard_ctypes` 并以管理员身份运行。游戏窗口必须在最前。
+A: 状态栏应显示 `B 模式播放中（pydirectinput）` 或 `keyboard_ctypes`。若弹出「需要安装注入依赖」，点 **一键安装**（或手动 `pip install pydirectinput keyboard`）。游戏窗口必须在最前；仍无按键时以管理员运行，或到「设置」改成 `keyboard_ctypes`。
 
 **Q: 曲子太长，想慢点/快点？**
 A: 「设置」里调 BPM，或在曲谱开头写 `@bpm 120`。

@@ -49,9 +49,10 @@ def guide_text() -> str:
 2. 在游戏内先呼出口琴演奏界面，并保持游戏窗口聚焦（不要切走）。
 3. 点「开始演奏」或按 F5，脚本自动按曲谱注入 z–m 与中键半音。
 4. 点「停止」或按 F6 中断；演奏结束自动停止。
+- 若缺少 pydirectinput / keyboard：会弹出「需要安装注入依赖」，可点「一键安装」
+  （`python -m pip install pydirectinput keyboard`）后自动重试；取消则不开始。
+  打包 exe 请使用带依赖的发行版。
 - 若升降音不生效：到「设置」页切换「键-中键顺序」再试。
-- 若弹窗提示输入后端不可用：pip install pydirectinput keyboard，
-  或到「设置」把输入后端改为 keyboard_ctypes，并以管理员身份运行 exe。
 - 状态栏应显示「B 模式播放中（pydirectinput）」或「keyboard_ctypes」；
   若仍无按键，确认游戏窗口聚焦。已关闭光标在屏幕角落时中断注入的 FAILSAFE。
 

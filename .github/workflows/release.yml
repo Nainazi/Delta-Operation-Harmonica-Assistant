@@ -10,14 +10,43 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare ASCII asset name
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install requirements and PyInstaller
         run: |
-          set -e
-          src=$(ls dist/*.exe | head -n 1)
-          cp "$src" "dist/ZoraHarmonica-${GITHUB_REF_NAME}.exe"
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build exe (same flags as build.bat)
+        shell: cmd
+        run: |
+          chcp 65001 >nul
+          set NAME=佐拉口琴谱伴
+          pyinstaller --onefile --windowed --noconfirm ^
+            --name "%NAME%" ^
+            --hidden-import pydirectinput ^
+            --hidden-import keyboard ^
+            --collect-submodules pydirectinput ^
+            --collect-submodules keyboard ^
+            --collect-all customtkinter ^
+            --collect-submodules harmonica ^
+            --add-data "harmonica\scores;harmonica\scores" ^
+            harmonica\main.py
+
+      - name: Rename asset
+        shell: pwsh
+        run: |
+          $src = Get-ChildItem -Path dist -Filter *.exe | Select-Object -First 1
+          if (-not $src) { throw "No exe in dist/" }
+          Copy-Item $src.FullName "dist/ZoraHarmonica-${{ github.ref_name }}.exe"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -29,6 +58,7 @@ jobs:
             ## 说明
             - 版本：`${{ github.ref_name }}`
             - 推荐优先使用「手动辅助」模式（零风险）
-            - 源码与 `build/`、`dist/` 已包含在仓库中
+            - 自动注入若缺 `pydirectinput` / `keyboard`，源码运行可在提示窗点「一键安装」
+            - 曲库新增「See You Again（1.5倍速梗）」练习片段
           files: dist/ZoraHarmonica-*.exe
           fail_on_unmatched_files: true

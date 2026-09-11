@@ -22,7 +22,7 @@ from ..config import (
 
 from .theme import (
     C_BG, C_SIDEBAR, C_CARD, C_CARD_HI, C_TEXT, C_TEXT_DIM, C_ACCENT, C_ACCENT_HOVER,
-    C_OK, C_WARN, init_theme, make_card, ToolTip,
+    C_OK, C_WARN, C_DANGER, init_theme, make_card, ToolTip,
 )
 from .hud import HUDOverlay
 from . import play_page
@@ -395,6 +395,123 @@ class App:
         except Exception:
             pass
 
+    def _ensure_inject_backend(self) -> Optional[backend_mod.InputBackend]:
+        """B 模式用：拿到真实后端。缺库时弹出安装对话框，取消则返回 None。"""
+        be = backend_mod.create_backend(self.cfg.input)
+        if be is not None and be.name != "null":
+            return be
+        retried = self._prompt_install_inject_backend()
+        if not retried:
+            self._set_status("已取消自动注入（未安装输入后端）")
+            return None
+        be = backend_mod.create_backend(self.cfg.input)
+        if be is not None and be.name != "null":
+            return be
+        detail = backend_mod.LAST_BACKEND_ERROR or "输入后端仍不可用"
+        self._set_status("自动注入未启动：输入后端仍不可用")
+        self._fill_warn_text([detail])
+        return None
+
+    def _prompt_install_inject_backend(self) -> bool:
+        """依赖缺失提示：一键安装后重试 create_backend。取消/关闭返回 False。"""
+        detail = (backend_mod.LAST_BACKEND_ERROR or "").strip() or (
+            "未能加载 pydirectinput / keyboard。"
+        )
+        result = {"ok": False}
+
+        win = ctk.CTkToplevel(self.root)
+        win.title("需要安装注入依赖")
+        win.configure(fg_color=C_BG)
+        win.geometry("560x420")
+        win.transient(self.root)
+        win.grab_set()
+        try:
+            win.focus_force()
+        except Exception:
+            pass
+
+        ctk.CTkLabel(
+            win, text="自动注入需要输入库",
+            font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold"),
+            text_color=C_ACCENT, anchor="w").pack(fill="x", padx=20, pady=(18, 6))
+        ctk.CTkLabel(
+            win,
+            text="当前 Python 缺少 pydirectinput 或 keyboard，B 模式不会发送 z–m / 中键。\n"
+                 "可点「一键安装」执行：python -m pip install pydirectinput keyboard",
+            text_color=C_TEXT, font=ctk.CTkFont(family="Segoe UI", size=12),
+            wraplength=520, justify="left", anchor="w").pack(fill="x", padx=20)
+        box = ctk.CTkTextbox(
+            win, height=180, font=ctk.CTkFont(family="Consolas", size=11),
+            fg_color="#0e1417", text_color=C_WARN, corner_radius=8, wrap="word")
+        box.pack(fill="both", expand=True, padx=20, pady=12)
+        box.insert("1.0", detail)
+        box.configure(state="disabled")
+
+        status = ctk.CTkLabel(
+            win, text="", text_color=C_TEXT_DIM,
+            font=ctk.CTkFont(family="Segoe UI", size=11), anchor="w")
+        status.pack(fill="x", padx=20)
+
+        btns = ctk.CTkFrame(win, fg_color="transparent")
+        btns.pack(fill="x", padx=20, pady=(8, 16))
+
+        def _set_log(text: str) -> None:
+            box.configure(state="normal")
+            box.delete("1.0", "end")
+            box.insert("1.0", text)
+            box.configure(state="disabled")
+
+        def do_cancel() -> None:
+            result["ok"] = False
+            try:
+                win.grab_release()
+            except Exception:
+                pass
+            win.destroy()
+
+        def do_install() -> None:
+            install_btn.configure(state="disabled")
+            cancel_btn.configure(state="disabled")
+            status.configure(text="正在安装 pydirectinput / keyboard…")
+            win.update_idletasks()
+            ok, log = backend_mod.install_inject_dependencies()
+            if ok:
+                be = backend_mod.create_backend(self.cfg.input)
+                if be is not None and be.name != "null":
+                    result["ok"] = True
+                    status.configure(text="安装成功，后端：" + be.name, text_color=C_OK)
+                    try:
+                        win.grab_release()
+                    except Exception:
+                        pass
+                    win.destroy()
+                    return
+                _set_log((log + "\n\n" if log else "") + (
+                    backend_mod.LAST_BACKEND_ERROR or "安装后仍无法创建输入后端。"))
+                status.configure(text="已安装，但后端仍不可用。可取消后检查设置。",
+                                 text_color=C_DANGER)
+            else:
+                _set_log(log or "安装失败")
+                status.configure(text="安装失败。可手动 pip 后重试，或取消。",
+                                 text_color=C_DANGER)
+            install_btn.configure(state="normal")
+            cancel_btn.configure(state="normal")
+
+        cancel_btn = ctk.CTkButton(
+            btns, text="取消", width=100, height=34, corner_radius=8,
+            fg_color=C_CARD_HI, hover_color="#3a5044", text_color=C_TEXT,
+            command=do_cancel)
+        cancel_btn.pack(side="left")
+        install_btn = ctk.CTkButton(
+            btns, text="一键安装", width=140, height=34, corner_radius=8,
+            fg_color=C_ACCENT, hover_color=C_ACCENT_HOVER, text_color="#0b0f11",
+            command=do_install)
+        install_btn.pack(side="right")
+
+        win.protocol("WM_DELETE_WINDOW", do_cancel)
+        win.wait_window()
+        return bool(result["ok"])
+
     def _on_start(self) -> None:
         if self.dispatcher is not None and self.dispatcher.is_running():
             self._set_status("正在播放中，请先停止")
@@ -419,20 +536,10 @@ class App:
             return
 
         if mode == "B":
-            try:
-                be, note = backend_mod.resolve_backend(self.cfg.input, require_real=True)
-            except backend_mod.BackendUnavailable as e:
-                self._set_status("自动注入未启动：输入后端不可用")
-                self._fill_warn_text([str(e)])
-                messagebox.showerror("输入后端不可用", str(e))
+            be = self._ensure_inject_backend()
+            if be is None or be.name == "null":
                 return
-            if be.name == "null":
-                # require_real 已禁止；双保险，绝不带着空 stub 假装在注入
-                self._set_status("自动注入未启动：后端为空")
-                messagebox.showerror(
-                    "输入后端不可用",
-                    "未能创建真实输入后端，自动注入不会发送 z–m / 中键。")
-                return
+            note = getattr(be, "warning", None)
             self.dispatcher = disp.Dispatcher(
                 self.cfg, backend=be, on_progress=self._on_progress,
                 on_error=self._on_dispatch_error)

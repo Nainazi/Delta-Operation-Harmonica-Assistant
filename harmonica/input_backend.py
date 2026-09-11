@@ -13,6 +13,9 @@ from typing import Callable, List, Optional, Tuple
 
 from .config import InputConfig
 
+# 最近一次 create_backend 失败原因（B 模式安装对话框展示）。成功时清空。
+LAST_BACKEND_ERROR: Optional[str] = None
+
 
 class BackendUnavailable(RuntimeError):
     """请求的真实输入后端无法创建（缺库 / 导入失败 / 被设为 null）。"""
@@ -210,70 +213,95 @@ def _try_construct(name: str) -> InputBackend:
     raise BackendUnavailable("未知输入后端 %r。请选择 pydirectinput / keyboard_ctypes / null。" % name)
 
 
-def resolve_backend(
-    cfg: InputConfig, *, require_real: bool = False
-) -> Tuple[InputBackend, Optional[str]]:
+def _preferred_then_fallback(name: str) -> List[str]:
+    """pydirectinput ↔ keyboard_ctypes 互为后备。"""
+    if name == "keyboard_ctypes":
+        return ["keyboard_ctypes", "pydirectinput"]
+    return ["pydirectinput", "keyboard_ctypes"]
+
+
+def create_backend(cfg: InputConfig) -> InputBackend:
     """按配置创建后端。
 
-    require_real=True（B 模式）：禁止静默落到 NullBackend。
-    首选后端失败时自动尝试另一种真实后端，并通过 warning 告知。
+    先试首选，再试另一种真实后端；全部失败才返回 NullBackend，
+    并把原因写入 LAST_BACKEND_ERROR（成功则清空）。
     """
+    global LAST_BACKEND_ERROR
+    LAST_BACKEND_ERROR = None
+
     name = _alias_backend_name(cfg.backend)
     if name == "null":
-        if require_real:
-            raise BackendUnavailable(
-                "设置中的输入后端为 null（不发送按键）。\n"
-                "请到「设置」选择 pydirectinput 或 keyboard_ctypes 后再使用自动注入。"
-            )
+        LAST_BACKEND_ERROR = (
+            "设置中的输入后端为 null（不发送按键）。\n"
+            "请到「设置」选择 pydirectinput 或 keyboard_ctypes 后再使用自动注入。"
+        )
         be = NullBackend()
-        return be, None
+        be.warning = LAST_BACKEND_ERROR
+        return be
 
-    order: List[str] = []
-    if name in ("pydirectinput", "keyboard_ctypes"):
-        order.append(name)
-    else:
-        if require_real:
-            raise BackendUnavailable(
-                "未知输入后端 %r。请到「设置」选择 pydirectinput 或 keyboard_ctypes。" % name
-            )
-        return NullBackend(), "未知输入后端 %r，已使用空后端。" % name
-
-    other = "keyboard_ctypes" if name == "pydirectinput" else "pydirectinput"
-    if other not in order:
-        order.append(other)
+    if name not in ("pydirectinput", "keyboard_ctypes"):
+        LAST_BACKEND_ERROR = (
+            "未知输入后端 %r，将依次尝试 pydirectinput / keyboard_ctypes。" % name
+        )
+        name = "pydirectinput"
 
     errors: List[str] = []
-    for candidate in order:
+    for candidate in _preferred_then_fallback(name):
         try:
             be = _try_construct(candidate)
         except Exception as e:
             errors.append("%s: %s" % (candidate, e))
             continue
-        note = None
         if candidate != name:
-            note = (
+            be.warning = (
                 "首选后端 %s 不可用（%s），已改用 %s。"
                 % (name, errors[-1] if errors else "未知原因", candidate)
             )
-            be.warning = note
-        return be, note
+        LAST_BACKEND_ERROR = None
+        return be
 
     detail = "；".join(errors) if errors else "无可用后端"
-    if require_real:
-        raise BackendUnavailable(
-            "无法创建输入后端，自动注入不会发送按键。\n"
-            "%s\n\n"
-            "请安装依赖：pip install pydirectinput keyboard\n"
-            "打包版请确认 exe 含这些库；仍失败时以管理员身份运行，"
-            "并到「设置」切换输入后端。"
-            % detail
-        )
+    LAST_BACKEND_ERROR = (
+        "无法创建输入后端（不会发送 z–m / 中键）。\n"
+        "%s\n\n"
+        "可点「一键安装」执行：python -m pip install pydirectinput keyboard\n"
+        "或到「设置」切换输入后端；仍失败时以管理员身份运行。"
+        % detail
+    )
     be = NullBackend()
-    be.warning = "输入后端不可用（%s），已回退空后端。" % detail
+    be.warning = LAST_BACKEND_ERROR
+    return be
+
+
+def resolve_backend(
+    cfg: InputConfig, *, require_real: bool = False
+) -> Tuple[InputBackend, Optional[str]]:
+    """create_backend 的包装：返回 (backend, warning)。require_real 时 null 会抛错。"""
+    be = create_backend(cfg)
+    if require_real and be.name == "null":
+        raise BackendUnavailable(LAST_BACKEND_ERROR or "无法创建输入后端")
     return be, be.warning
 
 
-def create_backend(cfg: InputConfig, *, require_real: bool = False) -> InputBackend:
-    """根据配置创建后端。缺库时：require_real=False 回退 NullBackend；True 则抛错。"""
-    be, _note = resolve_backend(cfg, require_real=require_real)
-    return be
+def install_inject_dependencies() -> Tuple[bool, str]:
+    """运行 python -m pip install pydirectinput keyboard。供 B 模式一键安装。"""
+    import subprocess
+    import sys
+
+    if getattr(sys, "frozen", False):
+        return (
+            False,
+            "当前是打包后的 exe，无法用 pip 往捆绑环境装库。\n"
+            "请下载带依赖的发行版，或改用源码：python -m harmonica",
+        )
+    cmd = [sys.executable, "-m", "pip", "install", "pydirectinput", "keyboard"]
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=180, check=False,
+        )
+        out = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+        if proc.returncode == 0:
+            return True, out or "安装完成"
+        return False, out or ("pip 退出码 %s" % proc.returncode)
+    except Exception as e:
+        return False, str(e)

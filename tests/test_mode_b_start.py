@@ -34,7 +34,7 @@ def _install_gui_stubs() -> None:
 _install_gui_stubs()
 
 from harmonica.config import AppConfig
-from harmonica.input_backend import BackendUnavailable, NullBackend
+from harmonica.input_backend import NullBackend
 from harmonica.ui.app import App
 
 
@@ -93,14 +93,24 @@ class ModeBStartTests(unittest.TestCase):
 
     def test_start_b_aborts_when_backend_missing(self) -> None:
         app = self._bare_app()
-        with patch("harmonica.ui.app.backend_mod.resolve_backend",
-                   side_effect=BackendUnavailable("missing libs")), \
-             patch("harmonica.ui.app.messagebox") as mb:
-            app._on_start()
+        app._ensure_inject_backend = lambda: None
+        app._on_start()
         self.assertIsNone(app.dispatcher)
-        mb.showerror.assert_called()
-        args = app.status_label.configure.call_args
-        self.assertIn("未启动", str(args))
+
+    def test_ensure_inject_returns_real_without_dialog(self) -> None:
+        app = self._bare_app()
+        fake = MagicMock()
+        fake.name = "pydirectinput"
+        with patch("harmonica.ui.app.backend_mod.create_backend", return_value=fake):
+            got = app._ensure_inject_backend()
+        self.assertIs(got, fake)
+
+    def test_ensure_inject_cancel_returns_none(self) -> None:
+        app = self._bare_app()
+        with patch("harmonica.ui.app.backend_mod.create_backend",
+                   return_value=NullBackend()), \
+             patch.object(app, "_prompt_install_inject_backend", return_value=False):
+            self.assertIsNone(app._ensure_inject_backend())
 
     def test_start_b_uses_real_backend_not_null(self) -> None:
         app = self._bare_app()
@@ -116,9 +126,8 @@ class ModeBStartTests(unittest.TestCase):
             d.is_running = MagicMock(return_value=False)
             return d
 
-        with patch("harmonica.ui.app.backend_mod.resolve_backend",
-                   return_value=(fake, None)), \
-             patch("harmonica.ui.app.disp.Dispatcher", side_effect=fake_dispatcher), \
+        app._ensure_inject_backend = lambda: fake
+        with patch("harmonica.ui.app.disp.Dispatcher", side_effect=fake_dispatcher), \
              patch("harmonica.ui.app.messagebox"):
             app._on_start()
         self.assertIsNotNone(app.dispatcher)
