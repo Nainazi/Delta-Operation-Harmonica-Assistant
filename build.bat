@@ -30,6 +30,7 @@ pyinstaller --onefile --windowed --noconfirm ^
     --collect-submodules keyboard ^
     --collect-all customtkinter ^
     --collect-submodules harmonica ^
+    --add-data "harmonica\scores;harmonica\scores" ^
     harmonica\main.py
 
 if errorlevel 1 goto :error

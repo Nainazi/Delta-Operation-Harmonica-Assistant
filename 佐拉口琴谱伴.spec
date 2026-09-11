@@ -2,7 +2,7 @@
 from PyInstaller.utils.hooks import collect_submodules
 from PyInstaller.utils.hooks import collect_all
 
-datas = []
+datas = [('harmonica/scores', 'harmonica/scores')]
 binaries = []
 hiddenimports = ['pydirectinput', 'keyboard']
 hiddenimports += collect_submodules('pydirectinput')

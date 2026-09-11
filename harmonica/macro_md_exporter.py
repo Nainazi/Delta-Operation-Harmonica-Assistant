@@ -3,14 +3,17 @@
 把当前曲谱渲染为可读的 Markdown 教程，教用户用手写鼠标宏（非 G HUB Lua）
 按新键位（z x c v b n m）与「按住中键 = 半音」完成演奏。
 
-风味：三角洲行动 / Delta Force 战术简报式，但保持实用可读。
+支持驱动风格模板：generic（通用伪代码）/ logitech（罗技 G HUB）/ razer（雷蛇 Synapse）。
 本模块只生成文件，不发送任何输入。
 """
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
-from .config import AppConfig, DEFAULT_KEY_MAP, degree_to_key
+from .config import (
+    AppConfig, DEFAULT_KEY_MAP, degree_to_key, APP_VERSION,
+    MD_TEMPLATE_LABELS,
+)
 from .score_parser import NoteEvent
 
 
@@ -31,19 +34,171 @@ def _ms_for_beats(beats: float, beat_seconds: float) -> int:
     return max(1, int(round(beats * beat_seconds * 1000)))
 
 
+def _normalize_template(template: Optional[str], cfg: AppConfig) -> str:
+    t = (template or getattr(cfg, "md_template", None) or "generic").strip().lower()
+    if t in ("logitech", "ghub", "g hub", "罗技"):
+        return "logitech"
+    if t in ("razer", "synapse", "雷蛇"):
+        return "razer"
+    return "generic"
+
+
+def _driver_section(template: str) -> List[str]:
+    lines: List[str] = []
+    label = MD_TEMPLATE_LABELS.get(template, "通用伪代码")
+    lines.append(f"## 3. 手写宏步骤 — {label}")
+    lines.append("")
+    if template == "logitech":
+        lines.append("面向 **罗技 G HUB**（手动添加动作 / 录制，**不要**再用 Lua 脚本路径）：")
+        lines.append("")
+        lines.append("1. 打开 G HUB → 选中鼠标 → **宏** → **创建新宏**。")
+        lines.append("2. 选择「使用宏编辑器手动添加」或「录制」；推荐手动添加以便精确填延迟。")
+        lines.append("3. 按「逐音动作表」依次添加：")
+        lines.append("   - 普通音：`键盘按键按下` → `延迟`（hold）→ `键盘按键抬起` → `延迟`（余下时值）")
+        lines.append("   - 半音：`鼠标中键按下` → `键盘按键按下` → `延迟` → `键盘抬起` → `鼠标中键抬起` → `延迟`")
+        lines.append("   - 休止：仅插入 `延迟`")
+        lines.append("4. 保存宏，拖到侧键 / G 键；进安全区 → 呼出口琴界面 → 触发。")
+        lines.append("5. G HUB 中延迟单位为毫秒；若升降不准，略加长中键与字母重叠时间。")
+    elif template == "razer":
+        lines.append("面向 **雷蛇 Synapse** 宏编辑器：")
+        lines.append("")
+        lines.append("1. 打开 Synapse → 选中鼠标 → **宏** → **新建宏**。")
+        lines.append("2. 在宏编辑器中用「插入」添加键盘 / 鼠标事件与延迟（推荐精确延迟，而非录制抖动）。")
+        lines.append("3. 按「逐音动作表」依次添加：")
+        lines.append("   - 普通音：键盘 Down → Delay(hold) → 键盘 Up → Delay(余下)")
+        lines.append("   - 半音：鼠标中键 Down → 键盘 Down → Delay → 键盘 Up → 中键 Up → Delay")
+        lines.append("   - 休止：仅 Delay")
+        lines.append("4. 将宏绑定到鼠标侧键；安全区呼出口琴后再播放。")
+        lines.append("5. Synapse 延迟以 ms 计；可在属性里关闭「录制延迟」改用手填。")
+    else:
+        lines.append("适用于任意鼠标宏软件（罗技、雷蛇、卓威等均可；**不必**再用 G HUB Lua）：")
+        lines.append("")
+        lines.append("1. 打开你的鼠标驱动 / 宏编辑器。")
+        lines.append("2. 新建宏 → 选择「录制」或「手动添加动作」。")
+        lines.append("3. 按下一节「逐音动作表」依次添加：")
+        lines.append("   - 普通音：`按键按下(字母)` → 延迟 hold → `按键抬起` → 延迟（拍时值 − hold）")
+        lines.append("   - 半音：`中键按下` → `按键按下(字母)` → 延迟 hold → `按键抬起` → `中键抬起` → 延迟剩余时值")
+        lines.append("   - 休止：仅插入延迟")
+        lines.append("4. 把宏绑到侧键 / G 键；进安全区 → 呼出口琴界面 → 触发宏。")
+        lines.append("5. 若升降不准：改为「先中键再字母」，并略微加长中键与字母的重叠时间。")
+    lines.append("")
+    return lines
+
+
+def _pseudocode_block(events: List[NoteEvent], cfg: AppConfig,
+                      song_name: str, bpm: float, beat_seconds: float,
+                      template: str) -> List[str]:
+    lines: List[str] = []
+    hold = max(30, cfg.humanize.press_hold_ms)
+
+    if template == "logitech":
+        lines.append("## 5. G HUB 风格伪代码（对照手动添加）")
+        lines.append("")
+        lines.append("```")
+        lines.append(f"// {song_name} @ {bpm:.1f} BPM — Logitech G HUB style")
+        for ev in events:
+            ms = _ms_for_beats(ev.beats, beat_seconds)
+            if ev.is_rest:
+                lines.append(f"Delay {ms}ms              // rest {ev.beats:g} beat(s)")
+                continue
+            key = degree_to_key(cfg, ev.degree)
+            h = min(ms, hold)
+            rem = max(0, ms - h)
+            if ev.accidental != 0:
+                lines.append(f"Mouse Button 2 Down       // Middle")
+                lines.append(f"Key Down \"{key}\"           // {_acc_label(ev.accidental)}{ev.degree}")
+                lines.append(f"Delay {h}ms")
+                lines.append(f"Key Up \"{key}\"")
+                lines.append(f"Mouse Button 2 Up")
+                if rem:
+                    lines.append(f"Delay {rem}ms")
+            else:
+                lines.append(f"Key Down \"{key}\"           // {ev.degree}")
+                lines.append(f"Delay {h}ms")
+                lines.append(f"Key Up \"{key}\"")
+                if rem:
+                    lines.append(f"Delay {rem}ms")
+            lines.append("")
+        lines.append("```")
+    elif template == "razer":
+        lines.append("## 5. Synapse 风格伪代码（对照插入事件）")
+        lines.append("")
+        lines.append("```")
+        lines.append(f"// {song_name} @ {bpm:.1f} BPM — Razer Synapse style")
+        for ev in events:
+            ms = _ms_for_beats(ev.beats, beat_seconds)
+            if ev.is_rest:
+                lines.append(f"DELAY {ms}                // rest {ev.beats:g}")
+                continue
+            key = degree_to_key(cfg, ev.degree)
+            h = min(ms, hold)
+            rem = max(0, ms - h)
+            if ev.accidental != 0:
+                lines.append(f"MOUSE_BUTTON MIDDLE DOWN")
+                lines.append(f"KEYBOARD \"{key}\" DOWN     // {_acc_label(ev.accidental)}{ev.degree}")
+                lines.append(f"DELAY {h}")
+                lines.append(f"KEYBOARD \"{key}\" UP")
+                lines.append(f"MOUSE_BUTTON MIDDLE UP")
+                if rem:
+                    lines.append(f"DELAY {rem}")
+            else:
+                lines.append(f"KEYBOARD \"{key}\" DOWN     // {ev.degree}")
+                lines.append(f"DELAY {h}")
+                lines.append(f"KEYBOARD \"{key}\" UP")
+                if rem:
+                    lines.append(f"DELAY {rem}")
+            lines.append("")
+        lines.append("```")
+    else:
+        lines.append("## 5. 伪代码示例（便于对照手写）")
+        lines.append("")
+        lines.append("```")
+        lines.append(f"// {song_name} @ {bpm:.1f} BPM")
+        for ev in events:
+            ms = _ms_for_beats(ev.beats, beat_seconds)
+            if ev.is_rest:
+                lines.append(f"SLEEP {ms}            // 休止 {ev.beats:g} 拍")
+                continue
+            key = degree_to_key(cfg, ev.degree)
+            if ev.accidental != 0:
+                lines.append(f"MIDDLE DOWN")
+                lines.append(f"KEY DOWN  {key}       // {_acc_label(ev.accidental)}{ev.degree}")
+                lines.append(f"SLEEP     {min(ms, hold)}")
+                lines.append(f"KEY UP    {key}")
+                lines.append(f"MIDDLE UP")
+                rem = max(0, ms - hold)
+                if rem:
+                    lines.append(f"SLEEP     {rem}        // 余下时值")
+            else:
+                lines.append(f"KEY DOWN  {key}       // {ev.degree}")
+                lines.append(f"SLEEP     {min(ms, hold)}")
+                lines.append(f"KEY UP    {key}")
+                rem = max(0, ms - hold)
+                if rem:
+                    lines.append(f"SLEEP     {rem}")
+            lines.append("")
+        lines.append("```")
+    lines.append("")
+    return lines
+
+
 def render_markdown(events: List[NoteEvent], cfg: AppConfig,
-                    song_name: str = "未命名") -> str:
+                    song_name: str = "未命名",
+                    template: Optional[str] = None) -> str:
     """渲染完整 Markdown 教程字符串。"""
+    template = _normalize_template(template, cfg)
     beat_seconds = cfg.timing.beat_seconds or (60.0 / max(1.0, cfg.timing.bpm))
     bpm = cfg.timing.bpm
     km = cfg.input.key_map or DEFAULT_KEY_MAP
     map_line = "  ".join(f"{d}→`{km.get(d, DEFAULT_KEY_MAP[d])}`" for d in range(1, 8))
+    tpl_label = MD_TEMPLATE_LABELS.get(template, "通用伪代码")
 
     lines: List[str] = []
     lines.append(f"# 战术简报 · 口琴宏手写教程 — {song_name}")
     lines.append("")
     lines.append("> 代号：佐拉彩蛋口琴｜场景：三角洲行动 / Delta Force 安全区")
     lines.append("> 本文件由「佐拉口琴谱伴」生成，教你**手写鼠标宏**，不再导出 G HUB Lua。")
+    lines.append(f"> 驱动模板：**{tpl_label}**")
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -56,7 +211,7 @@ def render_markdown(events: List[NoteEvent], cfg: AppConfig,
     lines.append("")
     lines.append("---")
     lines.append("")
-    lines.append("## 1. 键位与半音（v1.0.2）")
+    lines.append("## 1. 键位与半音")
     lines.append("")
     lines.append("| 音级 | 按键 | 唱名 |")
     lines.append("| --- | --- | --- |")
@@ -84,17 +239,7 @@ def render_markdown(events: List[NoteEvent], cfg: AppConfig,
     lines.append("")
     lines.append("---")
     lines.append("")
-    lines.append("## 3. 手写宏通用步骤（任意鼠标宏软件）")
-    lines.append("")
-    lines.append("1. 打开你的鼠标驱动 / 宏编辑器（罗技、雷蛇、卓威等均可；**不必**再用 G HUB Lua）。")
-    lines.append("2. 新建宏 → 选择「录制」或「手动添加动作」。")
-    lines.append("3. 按下一节「逐音动作表」依次添加：")
-    lines.append("   - 普通音：`按键按下(字母)` → 延迟 hold → `按键抬起` → 延迟（拍时值 − hold）")
-    lines.append("   - 半音：`中键按下` → `按键按下(字母)` → 延迟 hold → `按键抬起` → `中键抬起` → 延迟剩余时值")
-    lines.append("   - 休止：仅插入延迟")
-    lines.append("4. 把宏绑到侧键 / G 键；进安全区 → 呼出口琴界面 → 触发宏。")
-    lines.append("5. 若升降不准：改为「先中键再字母」，并略微加长中键与字母的重叠时间。")
-    lines.append("")
+    lines.extend(_driver_section(template))
     lines.append("---")
     lines.append("")
     lines.append(f"## 4. 逐音动作表 — {song_name}")
@@ -113,35 +258,7 @@ def render_markdown(events: List[NoteEvent], cfg: AppConfig,
     lines.append("")
     lines.append("---")
     lines.append("")
-    lines.append("## 5. 伪代码示例（便于对照手写）")
-    lines.append("")
-    lines.append("```")
-    lines.append(f"// {song_name} @ {bpm:.1f} BPM")
-    for ev in events:
-        ms = _ms_for_beats(ev.beats, beat_seconds)
-        if ev.is_rest:
-            lines.append(f"SLEEP {ms}            // 休止 {ev.beats:g} 拍")
-            continue
-        key = degree_to_key(cfg, ev.degree)
-        if ev.accidental != 0:
-            lines.append(f"MIDDLE DOWN")
-            lines.append(f"KEY DOWN  {key}       // {_acc_label(ev.accidental)}{ev.degree}")
-            lines.append(f"SLEEP     {min(ms, max(30, cfg.humanize.press_hold_ms))}")
-            lines.append(f"KEY UP    {key}")
-            lines.append(f"MIDDLE UP")
-            rem = max(0, ms - max(30, cfg.humanize.press_hold_ms))
-            if rem:
-                lines.append(f"SLEEP     {rem}        // 余下时值")
-        else:
-            lines.append(f"KEY DOWN  {key}       // {ev.degree}")
-            lines.append(f"SLEEP     {min(ms, max(30, cfg.humanize.press_hold_ms))}")
-            lines.append(f"KEY UP    {key}")
-            rem = max(0, ms - max(30, cfg.humanize.press_hold_ms))
-            if rem:
-                lines.append(f"SLEEP     {rem}")
-        lines.append("")
-    lines.append("```")
-    lines.append("")
+    lines.extend(_pseudocode_block(events, cfg, song_name, bpm, beat_seconds, template))
     lines.append("---")
     lines.append("")
     lines.append("## 6. 战术提示")
@@ -153,14 +270,15 @@ def render_markdown(events: List[NoteEvent], cfg: AppConfig,
     lines.append("")
     lines.append("---")
     lines.append("")
-    lines.append("*佐拉口琴谱伴 v1.0.2 · 仅供彩蛋娱乐*")
+    lines.append(f"*佐拉口琴谱伴 v{APP_VERSION} · 仅供彩蛋娱乐*")
     lines.append("")
     return "\n".join(lines)
 
 
 def export_to_file(events: List[NoteEvent], cfg: AppConfig, path: str,
-                   song_name: str = "未命名") -> None:
+                   song_name: str = "未命名",
+                   template: Optional[str] = None) -> None:
     """渲染并写入 .md 文件。"""
-    content = render_markdown(events, cfg, song_name=song_name)
+    content = render_markdown(events, cfg, song_name=song_name, template=template)
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)

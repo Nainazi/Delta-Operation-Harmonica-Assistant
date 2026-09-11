@@ -9,7 +9,7 @@
 customtkinter>=6.0
 
 # DirectInput 输入注入，游戏兼容性优于 pyautogui
-pydirectinput>=1.0.6
+pydirectinput>=1.0.4
 
 # 全局热键注册（开始/停止）
 keyboard>=0.13.5

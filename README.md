@@ -7,6 +7,15 @@
 
 ## 更新日志
 
+### v1.0.4
+- **代码结构**：将原 `gui.py` 拆分为 `harmonica/ui/`（app / play / library / guide / settings / hud / wizard），入口 `harmonica.gui:App` 保持兼容。
+- **曲库**：侧边栏新增「曲库」（在演奏与使用引导之间）；内置 `scores/*.txt`、用户目录曲谱、收藏与最近；可打开到编辑器 / 收藏 / 删除「我的」。
+- **宏教程模板**：导出 MD 时可选手写风格——罗技 G HUB / 雷蛇 Synapse / 通用伪代码（默认通用）。
+- **AI 填回**：AI 提示词卡片新增「从剪贴板填入」，把 AI 输出的简谱写入曲谱编辑器（非空时确认）。
+- **新手向导**：首次启动三步向导（键位 / 中键半音 / F5·F6）；使用引导与设置可「再次查看」。
+- **键位预览**：设置页展示 z–m 七键芯片，并注明中键+字母=半音；设置页聚焦时尽力挂钩物理键高亮。
+- **导出文件名**：默认 `{曲名}_bpm{bpm}_宏教程.md`（曲名取自首条 `//` 注释）。
+
 ### v1.0.3
 - **布局**：工具栏为原版三列（播放控制 / 曲谱文件 / 悬浮提示）；曲谱编辑与 AI 简谱提示词左右并排，底栏合并进度与状态，提高屏幕利用率。
 - E 模式主按钮即导出宏教程时，隐藏曲谱文件列里的重复导出行。
@@ -79,7 +88,7 @@
 
 **网上常见的简谱也能转**：把 `1155665`、`[1]`（高八度）、`1.`（点八度）、`♯1` 这种格式粘贴到「转换简谱」里，一键转成上面这种格式。
 
-**让 AI 帮你写谱**：演奏页有「AI 简谱提示词」面板，点右上角 **复制**，粘贴给 ChatGPT / Claude 等，再附上歌名或旋律即可。
+**让 AI 帮你写谱**：演奏页有「AI 简谱提示词」面板，点 **复制** 发给 ChatGPT / Claude 等；拿到简谱后点 **从剪贴板填入** 写回编辑器。
 
 ---
 
@@ -121,15 +130,16 @@ A: 默认 F5/F6 避开了演奏键与 WASD；可到「设置 → 全局热键」
 ```
 harmonica/
   main.py              入口
-  config.py            配置保存（键位 / 热键 / BPM）
+  config.py            配置保存（键位 / 热键 / BPM / 曲库 / 向导）
   score_parser.py      简谱解析 + 音域检查
   score_convert.py     简谱格式转换（连写/括号/点八度 → 本工具记法）
   humanizer.py         时序抖动（降低检测概率）
   input_backend.py     键鼠注入后端（pydirectinput / keyboard / null）
   dispatcher.py        播放调度（B 注入 / C 提示）
-  macro_md_exporter.py 导出鼠标宏 Markdown 教程
+  macro_md_exporter.py 导出鼠标宏 Markdown 教程（多驱动模板）
   ghub_exporter.py     [已弃用] 转发到 macro_md_exporter
-  gui.py               界面（customtkinter 暗色主题）
+  gui.py               界面兼容入口（转发 ui.App）
+  ui/                  界面模块（app / play / library / guide / settings / hud / wizard）
   scores/              示例曲谱（小星星/茉莉花/天空之城）
 build.bat              一键打包 exe
 requirements.txt       依赖清单
@@ -145,4 +155,4 @@ python -m harmonica          # 运行
 .\build.bat                  # 打包 exe
 ```
 
-配置文件在 `%APPDATA%\佐拉口琴谱伴\settings.json`，异常日志在 `error.log`。
+配置文件在 `%APPDATA%\佐拉口琴谱伴\settings.json`，用户曲谱在同目录 `scores\`，异常日志在 `error.log`。
