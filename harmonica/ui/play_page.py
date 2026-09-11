@@ -75,9 +75,9 @@ def build_play_page(app: "App") -> ctk.CTkFrame:
     app.mode_var = tk.StringVar(value=app.cfg.mode)
     app._mode_radios = []
     for m, desc, tip in [
-        ("C", "手动辅助", "脚本只显示提示（z x c v b n m + 中键半音），你自己按，不注入"),
-        ("E", "鼠标宏教程", "导出 Markdown 手写鼠标宏教程（新键位 + 中键半音）"),
-        ("B", "自动注入", "脚本自动模拟 z–m 键与中键半音，违反游戏 ToS。游戏若以管理员运行，本工具也须以管理员运行。")]:
+        ("C", "手动辅助", "脚本只显示提示（z–m / ， + 左键低八度 / 右键高八度 / 中键半音），你自己按，不注入"),
+        ("E", "鼠标宏教程", "导出 Markdown 手写鼠标宏教程（含八度鼠标键与中键半音）"),
+        ("B", "自动注入", "脚本自动模拟 z–m / ，与鼠标左右中键。违反游戏 ToS。游戏若以管理员运行，本工具也须以管理员运行。")]:
         rb = ctk.CTkRadioButton(
             top, text=desc, variable=app.mode_var, value=m,
             # 把选中值直接传给 handler，避免个别 CTk 版本 command 早于 variable 更新
@@ -153,7 +153,7 @@ def build_play_page(app: "App") -> ctk.CTkFrame:
     app.score_text.pack(fill="both", expand=True, padx=12, pady=(0, 4))
     ctk.CTkLabel(
         left,
-        text="记法: 1-7 音级(键 z x c v b n m) · #升 b降=按住中键 · ^高 ,低八度 · - . _ · 0休止 · | · // · @bpm",
+        text="记法: 1-7 → z x c v b n m · #/b=中键 · ^=右键高八度 · ,=左键低八度 · 1^^=右键+， · - . _ · 0休止 · | · // · @bpm",
         text_color=C_TEXT_DIM, font=ctk.CTkFont(family="Segoe UI", size=10),
         anchor="w").pack(fill="x", padx=12, pady=(0, 10))
 
@@ -198,7 +198,7 @@ def build_play_page(app: "App") -> ctk.CTkFrame:
     app.current_note_label = ctk.CTkLabel(
         row, text="—",
         font=ctk.CTkFont(family="Segoe UI", size=18, weight="bold"),
-        text_color=C_ACCENT, width=120)
+        text_color=C_ACCENT, width=200)
     app.current_note_label.pack(side="left", padx=(6, 8))
     app.beat_label = ctk.CTkLabel(
         row, text="", text_color=C_TEXT_DIM,

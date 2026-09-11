@@ -64,8 +64,8 @@ class HumanizeConfig:
     duration_jitter_pct: float = 0.10   # 时长抖动幅度 ±10%
     inter_note_gap_ms: int = 40         # 音符间随机间隔基准
     inter_note_gap_jitter_ms: int = 30  # 间隔抖动幅度
-    press_hold_ms: int = 45             # 按键按下到抬起时长基准
-    press_hold_jitter_ms: int = 25      # 按键时长抖动幅度
+    press_hold_ms: int = 45             # 最短按键保持（毫秒）；实际保持 ≈ 音符时值 85%–90%
+    press_hold_jitter_ms: int = 25      # 无 duration 时的固定脉冲抖动（宏教程回退）
     seed: int = 0                       # 0 表示每次随机；非 0 用于复现
 
 
@@ -73,16 +73,15 @@ class HumanizeConfig:
 class TimingConfig:
     bpm: float = 90.0            # 每分钟拍数
     beat_seconds: float = 0.6    # 一拍秒数（= 60/bpm，缓存用）
-    # 键-修饰顺序：True=先按字母键再按住中键半音；False=先按住中键再按键
-    # （半音一律用中键按住；曲谱 # / b 仍区分升/降显示）
-    key_before_click: bool = False  # False=先按住中键再按字母（推荐）
+    # 键-修饰顺序：B 模式已改为「修饰整音按住 → 键 → 抬修饰」，此字段仅兼容旧配置
+    key_before_click: bool = False  # 不再影响 B 注入顺序
 
 
 @dataclass
 class InputConfig:
-    backend: str = "pydirectinput"   # pydirectinput | keyboard | ctypes
+    backend: str = "sendinput"   # sendinput | pydirectinput | keyboard_ctypes | null
     key_map: Dict[int, str] = field(default_factory=lambda: dict(DEFAULT_KEY_MAP))
-    # 半音修饰：按住中键（middle）。保留 L/R 编码仅作兼容字段，不再用于演奏。
+    # 左键=低八度，右键=高八度，中键=半音；按住覆盖整音
     middle_button_code: int = 2  # 常见宏软件：1=左 2=中 3=右
     left_button_code: int = 1
     right_button_code: int = 3
@@ -159,8 +158,8 @@ class AppConfig:
         b = str(getattr(cfg.input, "backend", "") or "").strip().lower()
         if b in ("keyboard", "ctypes"):
             cfg.input.backend = "keyboard_ctypes"
-        elif b not in ("pydirectinput", "keyboard_ctypes", "null"):
-            cfg.input.backend = "pydirectinput"
+        elif b not in ("sendinput", "pydirectinput", "keyboard_ctypes", "null"):
+            cfg.input.backend = "sendinput"
         return cfg
 
 

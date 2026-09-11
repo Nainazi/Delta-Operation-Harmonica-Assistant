@@ -6,7 +6,9 @@
   1 2 3 4 5 6 7        音级 do re mi fa sol la ti
   #1 #3 ...            升（演奏时：按住中键 + 对应字母键）
   b3 b6 ...            降（演奏时：按住中键 + 对应字母键，b 为小写）
-  1^ 1,                八度标记：^ 高八度、, 低八度（仅用于音域校验，口琴无八度键）
+  1^                   高八度（演奏时：按住右键 + 字母）
+  1,                   低八度（演奏时：按住左键 + 字母）
+  1^^                  最高 do（演奏时：按住右键 + 逗号键「,」）
   -                    延长前一个音符一拍（可连用 ---）
   .                    附点（前音符时值 ×1.5）
   _                    减时（前音符时值 ×0.5，可连用 __）
@@ -17,9 +19,9 @@
   @key C               可选：调号（仅参考，不影响演奏）
 
 音域说明：
-  口琴无八度键，实际可发音高 = degree + accidental（无八度偏移），
-  半音范围约 [-1, 12]（b1 到 #7）。超出此范围或带八度标记的音符
-  会产生警告（需移调/改编），但解析仍会完成。
+  基础音区 z–m；左键降八度、右键升八度；最高 do 为右键+逗号。
+  半音范围约低八度 b1 到最高 do（相对 do 约 [-13, 24]）。
+  超出映射的音符会产生警告，但解析仍会完成。
 """
 from __future__ import annotations
 
@@ -30,9 +32,9 @@ from typing import List, Tuple, Optional
 # 自然音级 -> 相对 do 的半音数
 DEGREE_SEMITONE = {1: 0, 2: 2, 3: 4, 4: 5, 5: 7, 6: 9, 7: 11}
 
-# 口琴可达半音范围（相对 do）：b1=-1 ... #7=12
-PLAYABLE_MIN = -1
-PLAYABLE_MAX = 12
+# 口琴可达半音范围（相对 do）：低八度 b1≈-13 … 最高 do≈24
+PLAYABLE_MIN = -13
+PLAYABLE_MAX = 24
 
 
 @dataclass
@@ -40,7 +42,7 @@ class NoteEvent:
     degree: int            # 1-7，休止为 0
     accidental: int        # -1 降 / 0 还原 / 1 升
     beats: float           # 时值（拍）
-    octave: int            # 八度偏移（仅记录用）
+    octave: int            # 八度偏移：-1 左键 / 0 基础 / +1 右键 / +2 最高 do（右键+，）
     is_rest: bool = False
     # 实际可发半音（degree+accidental，无八度）与意图半音（含八度）
     playable_semitone: Optional[int] = None
@@ -167,10 +169,13 @@ def parse(text: str) -> ParseResult:
         )
         events.append(ev)
 
-        # 音域校验
-        if octave != 0:
+        # 音域校验：八度由左/右键演奏；仅超出映射时警告
+        if octave < -1:
             warnings.append((len(events) - 1,
-                f"音符 {tok!r} 带八度标记，口琴无八度键，将按基础音区演奏（实际半音 {playable} ≠ 意图 {intended}）"))
+                f"音符 {tok!r} 低于一个八度：仅支持按住左键降一个八度"))
+        elif octave > 2 or (octave == 2 and degree != 1):
+            warnings.append((len(events) - 1,
+                f"音符 {tok!r} 超出最高音映射（最高 do 为 1^^ = 右键+，）；将按最接近的高八度演奏"))
         if intended < PLAYABLE_MIN or intended > PLAYABLE_MAX:
             warnings.append((len(events) - 1,
                 f"音符 {tok!r} 意图半音 {intended} 超出口琴可达范围 [{PLAYABLE_MIN},{PLAYABLE_MAX}]，需移调"))

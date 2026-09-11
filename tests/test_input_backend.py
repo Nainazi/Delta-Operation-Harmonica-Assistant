@@ -9,10 +9,13 @@ from unittest.mock import patch
 from harmonica.config import AppConfig, InputConfig
 from harmonica.input_backend import (
     BackendUnavailable,
+    KEYEVENTF_SCANCODE,
     InputBackend,
     NullBackend,
     PyDirectInputBackend,
+    SendInputBackend,
     create_backend,
+    key_to_scancode,
     resolve_backend,
 )
 
@@ -21,6 +24,12 @@ class _FakeReal(InputBackend):
     def __init__(self, name: str) -> None:
         self.name = name
 
+    def key_down(self, key: str) -> None:
+        pass
+
+    def key_up(self, key: str) -> None:
+        pass
+
     def press_key(self, key: str, hold_ms: int) -> None:
         pass
 
@@ -28,6 +37,18 @@ class _FakeReal(InputBackend):
         pass
 
     def click_right(self, hold_ms: int = 40) -> None:
+        pass
+
+    def left_down(self) -> None:
+        pass
+
+    def left_up(self) -> None:
+        pass
+
+    def right_down(self) -> None:
+        pass
+
+    def right_up(self) -> None:
         pass
 
     def middle_down(self) -> None:
@@ -89,6 +110,8 @@ class ResolveBackendTests(unittest.TestCase):
         def construct(name: str):
             if name == "pydirectinput":
                 raise ImportError("no pydirectinput")
+            if name == "sendinput":
+                raise ImportError("no sendinput")
             if name == "keyboard_ctypes":
                 return _FakeReal("keyboard_ctypes")
             raise AssertionError(name)
@@ -99,6 +122,18 @@ class ResolveBackendTests(unittest.TestCase):
         self.assertNotEqual(be.name, "null")
         self.assertIsNotNone(be.warning)
         self.assertIn("keyboard_ctypes", be.warning or "")
+        from harmonica import input_backend as m
+        self.assertIsNone(m.LAST_BACKEND_ERROR)
+
+    def test_prefers_sendinput_when_available(self) -> None:
+        def construct(name: str):
+            if name == "sendinput":
+                return _FakeReal("sendinput")
+            raise ImportError(name)
+
+        with patch("harmonica.input_backend._try_construct", side_effect=construct):
+            be = create_backend(InputConfig(backend="sendinput"))
+        self.assertEqual(be.name, "sendinput")
         from harmonica import input_backend as m
         self.assertIsNone(m.LAST_BACKEND_ERROR)
 
@@ -120,7 +155,7 @@ class ConfigBackendAliasTests(unittest.TestCase):
 
     def test_garbage_backend_defaults(self) -> None:
         cfg = AppConfig.from_dict({"input": {"backend": "???"}})
-        self.assertEqual(cfg.input.backend, "pydirectinput")
+        self.assertEqual(cfg.input.backend, "sendinput")
 
 
 class PyDirectInputBackendTests(unittest.TestCase):
@@ -177,6 +212,63 @@ class PyDirectInputBackendTests(unittest.TestCase):
             self.assertIn("未成功发送", str(ctx.exception))
         finally:
             sys.modules.pop("pydirectinput", None)
+
+
+class SendInputBackendTests(unittest.TestCase):
+    def test_scancodes_for_harmonica_keys(self) -> None:
+        self.assertEqual(key_to_scancode("z"), 0x2C)
+        self.assertEqual(key_to_scancode("m"), 0x32)
+        self.assertEqual(key_to_scancode(","), 0x33)
+        self.assertEqual(key_to_scancode("Z"), 0x2C)
+        self.assertEqual(key_to_scancode("comma"), 0x33)
+
+    def test_construct_without_user32_fails_off_windows(self) -> None:
+        if sys.platform == "win32":
+            self.skipTest("Windows 上 SendInput 可用")
+        with self.assertRaises(BackendUnavailable):
+            SendInputBackend()
+
+    def test_mocked_sendinput_uses_scancode_and_mouse_flags(self) -> None:
+        sent = []
+
+        class FakeUser32:
+            def SendInput(self, n, arr, size):
+                item = arr[0]
+                if int(item.type) == 1:  # INPUT_KEYBOARD
+                    sent.append(("key", int(item.union.ki.wScan), int(item.union.ki.dwFlags)))
+                else:
+                    sent.append(("mouse", int(item.union.mi.dwFlags)))
+                return n
+
+        be = SendInputBackend(_user32=FakeUser32())
+        be.key_down("z")
+        be.left_down()
+        be.right_down()
+        be.middle_down()
+        be.key_up(",")
+        be.middle_up()
+        be.left_up()
+        be.right_up()
+        self.assertEqual(sent[0][0], "key")
+        self.assertEqual(sent[0][1], 0x2C)
+        self.assertTrue(sent[0][2] & KEYEVENTF_SCANCODE)
+        self.assertEqual(sent[1], ("mouse", 0x0002))  # left down
+        self.assertEqual(sent[2], ("mouse", 0x0008))  # right down
+        self.assertEqual(sent[3], ("mouse", 0x0020))  # middle down
+        self.assertEqual(sent[4][1], 0x33)
+        self.assertTrue(sent[4][2] & KEYEVENTF_SCANCODE)
+        self.assertTrue(sent[4][2] & 0x0002)  # key up
+        self.assertEqual(sent[5], ("mouse", 0x0040))  # middle up
+
+    def test_sendinput_incomplete_raises(self) -> None:
+        class FakeUser32:
+            def SendInput(self, n, arr, size):
+                return 0
+
+        be = SendInputBackend(_user32=FakeUser32())
+        with self.assertRaises(RuntimeError) as ctx:
+            be.key_down("z")
+        self.assertIn("SendInput", str(ctx.exception))
 
 
 if __name__ == "__main__":

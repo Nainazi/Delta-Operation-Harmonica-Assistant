@@ -5,7 +5,7 @@
 特性：
   - 独立线程播放，支持外部 stop()
   - 高精度时序：winmm.timeBeginPeriod(1) + perf_counter 绝对对齐，防误差累积
-  - 键-点击先后可配置（timing.key_before_click）
+  - 修饰键（左/右/中）按住覆盖整音；按键保持 ≈ 音符时值
   - 进度回调：on_progress(index, total, event) 供 GUI 更新
   - C 模式：仅回调不注入，零风险
 """
@@ -16,9 +16,10 @@ import threading
 import time
 from typing import Callable, Optional, List
 
-from .config import AppConfig, DEFAULT_KEY_MAP
+from .config import AppConfig
 from .humanizer import humanize_event
 from .input_backend import InputBackend, NullBackend
+from .note_map import map_event
 from .score_parser import NoteEvent
 
 
@@ -94,8 +95,8 @@ class Dispatcher:
                     pass
         finally:
             try:
-                # 异常中断时不要把中键留在按下状态
-                self.backend.middle_up()
+                # 异常中断时不要把鼠标修饰键留在按下状态
+                self.backend.release_all_mouse()
             except Exception:
                 pass
             self._end_period()
@@ -138,50 +139,30 @@ class Dispatcher:
                 continue
 
             if inject:
+                # press_key 内阻塞 hold_ms（≈ 音符时值）；键在睡眠期间保持按下
                 self._inject_note(ev, timing.hold_ms)
 
-            # 音符保持
+            # 时间线按完整音符时值推进；注入已占用 hold_ms，此处只补睡剩余
             cursor += timing.duration_s
             self._sleep_until(start + cursor)
 
-    def _resolve_key(self, degree: int) -> str:
-        km = self.cfg.input.key_map or {}
-        raw = km.get(degree)
-        if raw is None:
-            raw = km.get(str(degree))  # type: ignore[arg-type]
-        if not raw:
-            raw = DEFAULT_KEY_MAP.get(degree, str(degree))
-        return str(raw).strip().lower()
-
     def _inject_note(self, ev: NoteEvent, hold_ms: int) -> None:
-        """发送字母键；半音（♯/♭）时按住中键同时按键。
+        """按住鼠标修饰（整音）→ keyDown → 睡眠 hold_ms → keyUp → 松开修饰。
 
-        key_before_click=False（推荐）：先按住中键 → 按字母 → 松中键。
-        key_before_click=True：先按字母，再短按中键（兼容旧手感）。
+        左键=低八度，右键=高八度，中键=半音；1^^ 为右键 + 逗号。
         """
-        cfg = self.cfg
-        key = self._resolve_key(ev.degree)
-        need_middle = ev.accidental != 0
-
-        if not need_middle:
-            self.backend.press_key(key, hold_ms)
-            return
-
-        if cfg.timing.key_before_click:
-            # 兼容：键 → 中键点按
-            self.backend.press_key(key, hold_ms)
-            self.backend.middle_down()
-            try:
-                time.sleep(max(0.015, hold_ms / 1000.0))
-            finally:
-                self.backend.middle_up()
-        else:
-            # 推荐：按住中键吹半音
-            self.backend.middle_down()
-            try:
-                self.backend.press_key(key, hold_ms)
-            finally:
-                self.backend.middle_up()
+        mapping = map_event(ev, self.cfg.input.key_map)
+        buttons = list(mapping.mouse_buttons)
+        try:
+            for button in buttons:
+                self.backend.mouse_down(button)
+            self.backend.press_key(mapping.key, hold_ms)
+        finally:
+            for button in reversed(buttons):
+                try:
+                    self.backend.mouse_up(button)
+                except Exception:
+                    pass
 
     # ---- 高精度等待 ----
     def _sleep_until(self, target: float) -> None:

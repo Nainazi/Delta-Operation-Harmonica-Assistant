@@ -1,5 +1,6 @@
 # 佐拉口琴谱伴 - 运行依赖
-# B 模式（自动注入）需要 pydirectinput 与 keyboard
+# B 模式默认用 Windows SendInput（标准库 ctypes），无需额外包
+# pydirectinput / keyboard 仅为备选后端与全局热键
 # E 模式（导出鼠标宏 Markdown 教程）仅用标准库即可
 # C 模式（手动辅助）用 customtkinter/tkinter
 # PyInstaller 打包用（开发机安装即可，运行环境不需要）

@@ -17,9 +17,10 @@ from .. import dispatcher as disp
 from .. import input_backend as backend_mod
 from .. import macro_md_exporter
 from ..config import (
-    DEFAULT_KEY_MAP, degree_to_key, MD_TEMPLATE_LABELS, MD_TEMPLATES,
+    MD_TEMPLATE_LABELS, MD_TEMPLATES,
     extract_song_title, sanitize_filename,
 )
+from ..note_map import format_event_hint
 
 from .theme import (
     C_BG, C_SIDEBAR, C_CARD, C_CARD_HI, C_TEXT, C_TEXT_DIM, C_ACCENT, C_ACCENT_HOVER,
@@ -439,7 +440,8 @@ class App:
             text_color=C_ACCENT, anchor="w").pack(fill="x", padx=20, pady=(18, 6))
         ctk.CTkLabel(
             win,
-            text="当前 Python 缺少 pydirectinput 或 keyboard，B 模式不会发送 z–m / 中键。\n"
+            text="当前 Python 缺少 pydirectinput 或 keyboard（备选后端）。\n"
+                 "Windows 下默认 sendinput 通常不需要这些库。\n"
                  "可点「一键安装」执行：python -m pip install pydirectinput keyboard",
             text_color=C_TEXT, font=ctk.CTkFont(family="Segoe UI", size=12),
             wraplength=520, justify="left", anchor="w").pack(fill="x", padx=20)
@@ -604,7 +606,7 @@ class App:
                 on_progress=self._on_progress)
             self.dispatcher.play_c(r.events)
             self._set_playing(True)
-            self._set_status("C 模式提示中… 照提示按 z–m，半音按住中键（F6 可停）")
+            self._set_status("C 模式提示中… 照提示按 z–m / ，；左键低八度、右键高八度、中键半音（F6 可停）")
 
     def _on_test_run(self) -> None:
         if self.dispatcher is not None and self.dispatcher.is_running():
@@ -686,11 +688,7 @@ class App:
                     self.export_md_row.pack(fill="x", pady=2, before=self.convert_btn.master)
 
     def _format_play_hint(self, ev: "parser.NoteEvent") -> str:
-        key = degree_to_key(self.cfg, ev.degree)
-        acc = {1: "♯", -1: "♭", 0: ""}[ev.accidental]
-        if ev.accidental != 0:
-            return "中键+" + key + " " + acc
-        return key
+        return format_event_hint(ev, self.cfg.input.key_map)
 
     def _ai_prompt_text(self) -> str:
         return (
@@ -705,11 +703,11 @@ class App:
             "   . 附点（×1.5）；_ 减半（×0.5，可连用 __）\n"
             "5. | 小节线可写但会被忽略；不要输出和弦、歌词、吉他谱。\n"
             "6. 开头可写 @bpm 90 这类速度；可选 @key C。\n"
-            "7. 八度：^ 高八度、, 低八度仅作标记——口琴无八度键，尽量改编到基础音区 1-7。\n"
-            "8. 半音范围约 b1..#7；超范围请先移调再输出。\n"
+            "7. 八度：^ 高八度（按住右键）、, 低八度（按住左键）；1^^ 为最高 do（右键+逗号键）。\n"
+            "8. 半音范围约低八度到最高 do；超范围请先移调再输出。\n"
             "\n"
             "【演奏键位提示（给人类看，不要写进谱面）】\n"
-            "音级 1-7 对应按键 z x c v b n m；升/降演奏时按住鼠标中键再按字母。\n"
+            "音级 1-7 对应 z x c v b n m；# / b 按住中键；^ 按住右键；, 按住左键；最高 do 为右键+，。\n"
             "\n"
             "【合法示例（小星星片段）】\n"
             "@bpm 100\n"

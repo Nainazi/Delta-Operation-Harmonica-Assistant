@@ -35,7 +35,7 @@ class HUDOverlay:
 
         self.win.update_idletasks()
         sw = self.win.winfo_screenwidth()
-        x = max(0, sw - 280)
+        x = max(0, sw - 340)
         self.win.geometry("+%d+60" % x)
 
         self.note_label = tk.Label(
