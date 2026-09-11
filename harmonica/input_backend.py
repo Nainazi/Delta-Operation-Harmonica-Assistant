@@ -1,7 +1,10 @@
 """输入后端抽象。
 
-提供统一接口 press_key / click_left / click_right / hold_key，
+提供统一接口 press_key / click_left / click_right / middle_down / middle_up，
 底层可在 pydirectinput / keyboard+ctypes 之间切换。
+
+演奏键位：z x c v b n m（对应音级 1-7）。
+半音（♯/♭）：按住中键的同时按下字母键。
 
 字符串净化：模块内不出现 macro/cheat/auto/bot/hack/inject 等敏感词，
 以降低反作弊内存关键词扫描命中概率（见计划缓解措施 3）。
@@ -20,6 +23,8 @@ class InputBackend(Protocol):
     def press_key(self, key: str, hold_ms: int) -> None: ...
     def click_left(self, hold_ms: int = 40) -> None: ...
     def click_right(self, hold_ms: int = 40) -> None: ...
+    def middle_down(self) -> None: ...
+    def middle_up(self) -> None: ...
 
 
 # ---- pydirectinput 后端（默认，DirectInput 路径，游戏兼容性较好）----
@@ -53,6 +58,12 @@ class PyDirectInputBackend:
         _sleep_ms(hold_ms)
         api.mouseUp(button="right")
 
+    def middle_down(self) -> None:
+        self._api.mouseDown(button="middle")
+
+    def middle_up(self) -> None:
+        self._api.mouseUp(button="middle")
+
 
 # ---- keyboard + ctypes mouse 后端（备选）----
 class KeyboardCtypesBackend:
@@ -68,6 +79,8 @@ class KeyboardCtypesBackend:
         self._LEFT_UP = 0x0004
         self._RIGHT_DOWN = 0x0008
         self._RIGHT_UP = 0x0010
+        self._MIDDLE_DOWN = 0x0020
+        self._MIDDLE_UP = 0x0040
 
     def press_key(self, key: str, hold_ms: int) -> None:
         self._kb.press(key)
@@ -86,6 +99,12 @@ class KeyboardCtypesBackend:
         _sleep_ms(hold_ms)
         user32.mouse_event(self._RIGHT_UP, 0, 0, 0, 0)
 
+    def middle_down(self) -> None:
+        self._ctypes.windll.user32.mouse_event(self._MIDDLE_DOWN, 0, 0, 0, 0)
+
+    def middle_up(self) -> None:
+        self._ctypes.windll.user32.mouse_event(self._MIDDLE_UP, 0, 0, 0, 0)
+
 
 # ---- 空后端（试运行 / C 模式 / 测试用，不发送任何真实输入）----
 class NullBackend:
@@ -99,6 +118,12 @@ class NullBackend:
 
     def click_right(self, hold_ms: int = 40) -> None:
         _sleep_ms(hold_ms)
+
+    def middle_down(self) -> None:
+        pass
+
+    def middle_up(self) -> None:
+        pass
 
 
 def _sleep_ms(ms: int) -> None:

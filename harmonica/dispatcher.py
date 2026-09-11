@@ -128,24 +128,32 @@ class Dispatcher:
             self._sleep_until(start + cursor)
 
     def _inject_note(self, ev: NoteEvent, hold_ms: int) -> None:
-        """按配置顺序发送键 + 可选左/右键修饰。"""
+        """发送字母键；半音（♯/♭）时按住中键同时按键。
+
+        key_before_click=False（推荐）：先按住中键 → 按字母 → 松中键。
+        key_before_click=True：先按字母，再短按中键（兼容旧手感）。
+        """
         cfg = self.cfg
         key = cfg.input.key_map.get(ev.degree, str(ev.degree))
-        need_click = ev.accidental != 0
-        click_fn = None
-        if ev.accidental == 1:
-            click_fn = self.backend.click_left
-        elif ev.accidental == -1:
-            click_fn = self.backend.click_right
+        need_middle = ev.accidental != 0
+
+        if not need_middle:
+            self.backend.press_key(key, hold_ms)
+            return
 
         if cfg.timing.key_before_click:
+            # 兼容：键 → 中键点按
             self.backend.press_key(key, hold_ms)
-            if need_click and click_fn is not None:
-                click_fn(hold_ms)
+            self.backend.middle_down()
+            time.sleep(max(0.015, hold_ms / 1000.0))
+            self.backend.middle_up()
         else:
-            if need_click and click_fn is not None:
-                click_fn(hold_ms)
-            self.backend.press_key(key, hold_ms)
+            # 推荐：按住中键吹半音
+            self.backend.middle_down()
+            try:
+                self.backend.press_key(key, hold_ms)
+            finally:
+                self.backend.middle_up()
 
     # ---- 高精度等待 ----
     def _sleep_until(self, target: float) -> None:

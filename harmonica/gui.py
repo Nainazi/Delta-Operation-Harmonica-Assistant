@@ -25,12 +25,14 @@ from . import score_parser as parser
 from . import score_convert as convert
 from . import dispatcher as disp
 from . import input_backend as backend_mod
-from . import ghub_exporter
+from . import macro_md_exporter
+from . import ghub_exporter  # 兼容旧名；实际转发 MD 导出
+from .config import DEFAULT_KEY_MAP, degree_to_key
 
 
 RISK_BANNER = (
     "⚠ B 模式自动注入键鼠属游戏禁止行为，封号风险高；"
-    "E 模式生成罗技 G HUB 宏，风险中。仅限单人/安全区/非竞技场景，风险自负。C 模式零风险。"
+    "E 模式导出鼠标宏手写教程（中风险）。仅限单人/安全区/非竞技场景，风险自负。C 模式零风险。"
 )
 
 # 三角洲行动风格配色（战术青绿 + 深色军事质感）
@@ -94,8 +96,8 @@ class App:
 
         root.title(cfgmod.APP_NAME + "  v" + cfgmod.APP_VERSION)
         root.configure(fg_color=C_BG)
-        root.geometry("1040x820")
-        root.minsize(900, 700)
+        root.geometry("1180x720")
+        root.minsize(1020, 640)
 
         self._build_sidebar()
         self._build_content()
@@ -116,6 +118,8 @@ class App:
         self._show_page("play")
         # 启动进度队列轮询（主线程消费，避免子线程直接调用 tkinter）
         self.root.after(50, self._poll_progress)
+        self._hotkey_handles = []
+        self.root.after(200, self._register_hotkeys)
 
     def _build_sidebar(self) -> None:
         bar = ctk.CTkFrame(self.root, width=190, corner_radius=0, fg_color=C_SIDEBAR)
@@ -145,7 +149,7 @@ class App:
             self._nav_buttons[key] = btn
 
         # 底部风险徽标
-        badge = ctk.CTkLabel(bar, text="C 零风险\nE 中风险\nB 高风险",
+        badge = ctk.CTkLabel(bar, text="C 零风险\nE 宏教程·中\nB 高风险",
                              font=ctk.CTkFont(family="Segoe UI", size=10),
                              text_color=C_TEXT_DIM, justify="left", anchor="w",
                              fg_color=C_CARD, corner_radius=10)
@@ -183,17 +187,16 @@ class App:
     def _build_play_page(self) -> ctk.CTkFrame:
         page = ctk.CTkFrame(self.root, fg_color=C_BG, corner_radius=0)
 
-        # 网格：单列，所有区块跨全宽
         page.grid_columnconfigure(0, weight=1)
         page.grid_rowconfigure(2, weight=1)
 
-        # 风险横幅：跨全宽（最顶部，红框上半）
+        # 风险横幅
         ctk.CTkLabel(page, text=RISK_BANNER, fg_color=C_DANGER, text_color="#ffffff",
                       corner_radius=8, font=ctk.CTkFont(family="Segoe UI", size=11),
                       anchor="w", pady=8, padx=12).grid(row=0, column=0, sticky="ew",
                                                         padx=16, pady=(14, 8))
 
-        # 控制面板：跨全宽（红框下半，与横幅同容器同宽）
+        # ---- 原版三列工具栏 ----
         ctrl = ctk.CTkFrame(page, fg_color=C_CARD, corner_radius=14)
         ctrl.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 10))
         ctrl.grid_columnconfigure(0, weight=1)
@@ -212,9 +215,8 @@ class App:
             btn.pack(side="left", fill="x", expand=True, padx=(6, 0))
             if tip:
                 ToolTip(btn, tip)
-            return btn
+            return btn, f
 
-        # 顶部：模式（横排）
         top = ctk.CTkFrame(ctrl, fg_color="transparent")
         top.grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 6))
         ctk.CTkLabel(top, text="模式", text_color=C_TEXT_DIM,
@@ -222,9 +224,9 @@ class App:
         self.mode_var = tk.StringVar(value=self.cfg.mode)
         self._mode_radios = []
         for m, desc, tip in [
-            ("C", "手动辅助", "脚本只显示提示，你自己按键，不注入任何输入"),
-            ("E", "罗技鼠标宏", "生成罗技 G HUB Lua 脚本，由罗技驱动回放"),
-            ("B", "自动注入", "脚本自动模拟 1-7 键与左/右键，违反游戏 ToS")]:
+            ("C", "手动辅助", "脚本只显示提示（z x c v b n m + 中键半音），你自己按，不注入"),
+            ("E", "鼠标宏教程", "导出 Markdown 手写鼠标宏教程（新键位 + 中键半音）"),
+            ("B", "自动注入", "脚本自动模拟 z–m 键与中键半音，违反游戏 ToS")]:
             rb = ctk.CTkRadioButton(top, text=desc, variable=self.mode_var, value=m,
                                     command=self._on_mode_change,
                                     font=ctk.CTkFont(family="Segoe UI", size=12),
@@ -233,7 +235,6 @@ class App:
             ToolTip(rb, tip)
             self._mode_radios.append(rb)
 
-        # 中部：控制动作分三列（播放控制 / 曲谱文件 / HUD）
         mid = ctk.CTkFrame(ctrl, fg_color="transparent")
         mid.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 12))
         mid.grid_columnconfigure((0, 1, 2), weight=1)
@@ -243,79 +244,114 @@ class App:
         ctk.CTkLabel(col1, text="播放控制", text_color=C_TEXT_DIM,
                      font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
                      anchor="w").pack(fill="x")
-        self.primary_btn = row_action(col1, "播放", "▶ 开始演奏", self._on_start, accent=True)
+        self.primary_btn, _ = row_action(col1, "播放", "▶ 开始演奏", self._on_start, accent=True)
         row_action(col1, "停止", "⏹ 停止", self._on_stop)
-        self.test_btn = row_action(col1, "试运行", "👁 试运行", self._on_test_run,
+        self.test_btn, _ = row_action(col1, "试运行", "👁 试运行", self._on_test_run,
                    tip="只走时序与提示，不发送任何输入")
         row_action(col1, "解析", "🔍 解析预览", self._on_parse_preview)
+        self.hotkey_hint = ctk.CTkLabel(
+            col1,
+            text="热键  " + self.cfg.hotkey.start.upper() + " 开始 / "
+                 + self.cfg.hotkey.stop.upper() + " 停止",
+            text_color=C_TEXT_DIM, font=ctk.CTkFont(family="Segoe UI", size=10),
+            anchor="w")
+        self.hotkey_hint.pack(fill="x", pady=(6, 0))
 
         col2 = ctk.CTkFrame(mid, fg_color="transparent")
         col2.grid(row=0, column=1, sticky="ew", padx=4)
+        self._file_col = col2
         ctk.CTkLabel(col2, text="曲谱文件", text_color=C_TEXT_DIM,
                      font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
                      anchor="w").pack(fill="x")
         row_action(col2, "载入", "📂 载入曲谱", self._on_load_file)
-        row_action(col2, "保存", "💾 保存曲谱", self._on_save_file)
-        row_action(col2, "导出", "📤 导出 G HUB Lua", self._on_export_ghub,
-                   tip="把当前曲谱渲染为 .lua 文件，粘贴进罗技 G HUB 脚本编辑器")
-        row_action(col2, "转换", "🔄 转换简谱", self._on_convert,
-                   tip="把括号/点八度、无分隔连写等简谱转为本工具记法")
+        self.save_btn, _ = row_action(col2, "保存", "💾 保存曲谱", self._on_save_file)
+        self.export_md_btn, self.export_md_row = row_action(
+            col2, "导出", "📤 导出宏教程 MD", self._on_export_macro_md,
+            tip="导出可读 Markdown：教你按新键位手写鼠标宏（含中键半音与 BPM）")
+        self.convert_btn, _ = row_action(col2, "转换", "🔄 转换简谱", self._on_convert,
+                   tip="把括号/点八度、空分隔连写等简谱转为本工具记法")
 
         col3 = ctk.CTkFrame(mid, fg_color="transparent")
         col3.grid(row=0, column=2, sticky="ew", padx=4)
         ctk.CTkLabel(col3, text="悬浮提示", text_color=C_TEXT_DIM,
                      font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
                      anchor="w").pack(fill="x")
-        self.hud_btn = row_action(col3, "HUD", "🖥 显示覆盖层", self._toggle_hud, accent=True,
+        self.hud_btn, _ = row_action(col3, "HUD", "🖥 显示覆盖层", self._toggle_hud, accent=True,
                                   tip="在游戏画面上悬浮一个半透明、点击穿透的当前音符提示窗")
 
-        # 左列主体：曲谱编辑 + 底部音符提示
-        leftcol = ctk.CTkFrame(page, fg_color="transparent")
-        leftcol.grid(row=2, column=0, sticky="nsew", padx=(16, 4), pady=(0, 14))
-        leftcol.grid_rowconfigure(0, weight=1)
+        # ---- 主编辑区并排：曲谱略大，整体让位给工具栏 ----
+        main = ctk.CTkFrame(page, fg_color="transparent")
+        main.grid(row=2, column=0, sticky="nsew", padx=16, pady=(0, 6))
+        main.grid_columnconfigure(0, weight=3)
+        main.grid_columnconfigure(1, weight=2)
+        main.grid_rowconfigure(0, weight=1)
 
-        left = self._card(leftcol, "曲谱编辑（简谱）")
-        left.grid(row=0, column=0, sticky="nsew")
+        left = self._card(main, "曲谱编辑（简谱）")
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         self.score_text = ctk.CTkTextbox(left, font=ctk.CTkFont(family="Consolas", size=13),
                                           fg_color="#0e1417", text_color=C_TEXT,
                                           corner_radius=8, wrap="word")
-        self.score_text.pack(fill="both", expand=True, padx=12, pady=(0, 8))
-        ctk.CTkLabel(left,
-            text="记法: 1-7 音级 · #升 b降 · ^高八度 ,低八度 · -延长 .附点 _减时 · 0休止 · |小节线 · //注释 · @bpm 120",
+        self.score_text.pack(fill="both", expand=True, padx=12, pady=(0, 4))
+        ctk.CTkLabel(
+            left,
+            text="记法: 1-7 音级(键 z x c v b n m) · #升 b降=按住中键 · ^高 ,低八度 · - . _ · 0休止 · | · // · @bpm",
             text_color=C_TEXT_DIM, font=ctk.CTkFont(family="Segoe UI", size=10),
-            anchor="w").pack(fill="x", padx=12, pady=(0, 12))
+            anchor="w").pack(fill="x", padx=12, pady=(0, 10))
 
-        # 底部：当前音符一行紧凑色块（去掉卡片外壳，极简）
-        cf = ctk.CTkFrame(leftcol, fg_color=C_CARD, corner_radius=8)
-        cf.grid(row=1, column=0, sticky="ew", pady=(10, 0))
-        row = ctk.CTkFrame(cf, fg_color="transparent")
-        row.pack(fill="x", padx=14, pady=8)
-        ctk.CTkLabel(row, text="当前音符",
+        ai_card = self._card(main, None)
+        ai_card.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        ai_head = ctk.CTkFrame(ai_card, fg_color="transparent")
+        ai_head.pack(fill="x", padx=12, pady=(10, 4))
+        ctk.CTkLabel(ai_head, text="AI 简谱提示词",
+                     font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+                     text_color=C_ACCENT, anchor="w").pack(side="left")
+        ctk.CTkButton(ai_head, text="复制", width=64, height=28, corner_radius=8,
+                      fg_color=C_ACCENT, hover_color=C_ACCENT_HOVER, text_color="#0b0f11",
+                      font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+                      command=self._copy_ai_prompt).pack(side="right")
+        self.ai_prompt_box = ctk.CTkTextbox(
+            ai_card, font=ctk.CTkFont(family="Consolas", size=11),
+            fg_color="#0e1417", text_color=C_TEXT, corner_radius=8, wrap="word")
+        self.ai_prompt_box.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        self.ai_prompt_box.insert("1.0", self._ai_prompt_text())
+        self.ai_prompt_box.configure(state="disabled")
+
+        # ---- 底栏 ----
+        bottom = ctk.CTkFrame(page, fg_color="transparent")
+        bottom.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 12))
+
+        strip = ctk.CTkFrame(bottom, fg_color=C_CARD, corner_radius=8)
+        strip.pack(fill="x")
+        row = ctk.CTkFrame(strip, fg_color="transparent")
+        row.pack(fill="x", padx=12, pady=6)
+
+        ctk.CTkLabel(row, text="当前",
                      text_color=C_TEXT_DIM, font=ctk.CTkFont(family="Segoe UI", size=11)
                      ).pack(side="left")
-        self.current_note_label = ctk.CTkLabel(row, text="—",
-                                               font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold"),
-                                               text_color=C_ACCENT, width=64)
-        self.current_note_label.pack(side="left", padx=10)
+        self.current_note_label = ctk.CTkLabel(
+            row, text="—",
+            font=ctk.CTkFont(family="Segoe UI", size=18, weight="bold"),
+            text_color=C_ACCENT, width=120)
+        self.current_note_label.pack(side="left", padx=(6, 8))
         self.beat_label = ctk.CTkLabel(row, text="", text_color=C_TEXT_DIM,
                                        font=ctk.CTkFont(family="Segoe UI", size=11))
         self.beat_label.pack(side="left")
-        self.progress = ctk.CTkProgressBar(row, progress_color=C_ACCENT, fg_color=C_CARD_HI, height=8)
+        self.progress = ctk.CTkProgressBar(row, progress_color=C_ACCENT, fg_color=C_CARD_HI,
+                                           height=8, width=160)
         self.progress.set(0)
-        self.progress.pack(side="right", fill="x", expand=True, padx=(12, 0))
+        self.progress.pack(side="left", padx=(12, 10))
+        self.status_label = ctk.CTkLabel(
+            row, text="就绪 · 建议先用「试运行」预览节奏",
+            anchor="w", text_color=C_TEXT_DIM,
+            font=ctk.CTkFont(family="Segoe UI", size=11))
+        self.status_label.pack(side="left", fill="x", expand=True)
 
-        # 状态栏 + 警告区（跨全宽，底部）
-        sf = ctk.CTkFrame(page, fg_color="transparent")
-        sf.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 14))
-        self.status_label = ctk.CTkLabel(sf, text="就绪 · 建议先用「试运行」预览节奏",
-                                          anchor="w", text_color=C_TEXT_DIM,
-                                          font=ctk.CTkFont(family="Segoe UI", size=11))
-        self.status_label.pack(fill="x")
-        self.warn_text = ctk.CTkTextbox(sf, height=70, font=ctk.CTkFont(family="Consolas", size=11),
-                                         fg_color="#201a10", text_color=C_WARN,
-                                         corner_radius=8, wrap="word")
-        self.warn_text.pack(fill="x", pady=(6, 0))
+        self.warn_text = ctk.CTkTextbox(
+            bottom, height=42, font=ctk.CTkFont(family="Consolas", size=11),
+            fg_color="#201a10", text_color=C_WARN, corner_radius=8, wrap="word")
+        self.warn_text.pack(fill="x", pady=(4, 0))
         self.warn_text.configure(state="disabled")
+        self._warn_has_content = False
 
         return page
 
@@ -393,12 +429,39 @@ class App:
         kf = self._card(page, "键-点击顺序")
         kf.pack(fill="x", padx=16, pady=(0, 10))
         self.key_first_var = tk.BooleanVar(value=self.cfg.timing.key_before_click)
-        cb = ctk.CTkCheckBox(kf, text="先按数字键、再点左/右键修饰",
+        cb = ctk.CTkCheckBox(kf, text="先按字母键、再点中键（不勾选=先按住中键再按字母，推荐）",
                             variable=self.key_first_var, command=self._on_key_order_change,
                             text_color=C_TEXT, fg_color=C_ACCENT,
                             font=ctk.CTkFont(family="Segoe UI", size=12))
-        cb.pack(anchor="w", padx=16, pady=(6, 12))
-        ToolTip(cb, "若实测升降音不生效，取消勾选改为「先点击后按键」再试")
+        cb.pack(anchor="w", padx=16, pady=(6, 8))
+        ToolTip(cb, "半音=按住中键+字母。推荐不勾选（先中键再字母）；若不准可勾选换序")
+        ctk.CTkLabel(kf, text="演奏键位：1→z  2→x  3→c  4→v  5→b  6→n  7→m｜半音：按住鼠标中键",
+                     text_color=C_TEXT_DIM, font=ctk.CTkFont(family="Segoe UI", size=10),
+                     anchor="w").pack(fill="x", padx=16, pady=(0, 12))
+
+        # 全局热键（手动辅助 / 自动注入 开始·停止）
+        hk = self._card(page, "全局热键（手动辅助 / 自动注入）")
+        hk.pack(fill="x", padx=16, pady=(0, 10))
+        hk_row = ctk.CTkFrame(hk, fg_color="transparent")
+        hk_row.pack(fill="x", padx=16, pady=(6, 4))
+        ctk.CTkLabel(hk_row, text="开始", text_color=C_TEXT,
+                     font=ctk.CTkFont(family="Segoe UI", size=12), width=40).pack(side="left")
+        self.hotkey_start_var = tk.StringVar(value=self.cfg.hotkey.start)
+        e1 = ctk.CTkEntry(hk_row, textvariable=self.hotkey_start_var, width=100, justify="center",
+                          fg_color="#1a1b24", text_color=C_TEXT, border_color=C_CARD_HI)
+        e1.pack(side="left", padx=(0, 16))
+        ctk.CTkLabel(hk_row, text="停止", text_color=C_TEXT,
+                     font=ctk.CTkFont(family="Segoe UI", size=12), width=40).pack(side="left")
+        self.hotkey_stop_var = tk.StringVar(value=self.cfg.hotkey.stop)
+        e2 = ctk.CTkEntry(hk_row, textvariable=self.hotkey_stop_var, width=100, justify="center",
+                          fg_color="#1a1b24", text_color=C_TEXT, border_color=C_CARD_HI)
+        e2.pack(side="left")
+        ctk.CTkLabel(hk, text="默认 F5 开始 / F6 停止（避开 z x c v b n m 与 WASD）。曲中按停止可立即中断。",
+                     text_color=C_TEXT_DIM, font=ctk.CTkFont(family="Segoe UI", size=10),
+                     anchor="w").pack(fill="x", padx=16, pady=(4, 4))
+        ctk.CTkButton(hk, text="应用热键", width=100, height=30, corner_radius=8,
+                      fg_color=C_CARD_HI, hover_color="#3a5044", text_color=C_TEXT,
+                      command=self._apply_hotkeys).pack(anchor="w", padx=16, pady=(0, 12))
 
         # 输入后端
         bf = self._card(page, "输入后端（仅 B 模式）")
@@ -425,31 +488,30 @@ class App:
 
 ## 0. 这是什么
 三角洲行动 2 周年庆「佐拉」彩蛋任务链奖励道具「口琴」的曲谱辅助工具。
-口琴演奏机制：使用道具弹出演奏界面后，按键 1-7 对应 do-re-mi-fa-sol-la-ti，
-鼠标左键呼出当前音级的升调（+1 半音）、右键呼出降调（-1 半音）。
+口琴演奏机制（v1.0.2）：使用道具弹出演奏界面后，
+按键 z x c v b n m 对应 do-re-mi-fa-sol-la-ti（音级 1-7），
+按住鼠标中键的同时按字母 = 半音（曲谱 # 升 / b 降）。
 
-本工具提供三种链路：C 手动辅助（零风险）/ E 罗技鼠标宏（中风险）/ B 自动注入（高风险）。
+本工具提供三种链路：C 手动辅助（零风险）/ E 鼠标宏教程（中风险）/ B 自动注入（高风险）。
 
 ## 1. 快速上手（C 模式，推荐）
 1. 启动程序，默认进入「演奏」页，左侧已载入示例曲谱「小星星」。
 2. 顶部模式选「手动辅助」。
-3. 点「试运行」预览节奏，观察底部大号音符随节拍变化。
+3. 点「试运行」预览节奏，观察底部提示：字母键 + 半音时「中键+字母」。
 4. 点「显示 HUD 覆盖层」，把悬浮窗拖到不挡视野的位置（双击换边角，右键关闭）。
 5. 进入游戏，在局内使用口琴道具呼出演奏界面。
-6. 回到本程序点「开始演奏」，照 HUD / 界面提示的音符，自己在游戏里按 1-7 键；
-   遇到升/降音时点鼠标左/右键。
-7. 点「停止」可随时中断。
+6. 回到本程序点「开始演奏」（或按 F5），照 HUD / 界面提示自己按 z–m；
+   遇到升/降音时按住中键再按对应字母。
+7. 点「停止」或按 F6 可随时中断（曲中立刻生效）。
 
-## 2. E 模式（罗技鼠标宏，中风险）
-> 需自备罗技键鼠与已安装的 G HUB 软件；G HUB 是反作弊已知监控对象。
+## 2. E 模式（鼠标宏教程，中风险）
+> 导出 Markdown 手写教程，按任意鼠标宏软件自行编排；已不再导出 G HUB Lua。
 
-1. 顶部模式选「罗技鼠标宏」。
-2. 点主按钮「导出 G HUB Lua」，选保存路径，生成 .lua 文件。
-3. 打开罗技 G HUB，选择你的鼠标/键盘。
-4. 进入「配置 → 脚本（Script）」。
-5. 粘贴 .lua 文件内容到脚本编辑器。
-6. 绑定到 G 键或鼠标侧键。
-7. 对局中先呼出口琴演奏界面，再按该键回放。
+1. 顶部模式选「鼠标宏教程」。
+2. 点「导出宏教程 MD」（或主按钮），保存 .md 文件。
+3. 打开教程：内含键位表、BPM/时值、逐音动作表、伪代码。
+4. 在你的鼠标驱动里按教程手写宏（中键按下 → 字母 → 抬起）。
+5. 绑到侧键；安全区呼出口琴界面后再触发。
 
 ## 3. B 模式（自动注入，高风险）
 > 仅限单人 / 安全区 / 非竞技场景，违反游戏 ToS，封号风险自负。
@@ -457,14 +519,14 @@ class App:
 1. 先装依赖：pip install pydirectinput keyboard。
 2. 顶部模式选「自动注入」，首次会弹风险确认窗。
 3. 在游戏内先呼出口琴演奏界面，并保持游戏窗口聚焦（不要切走）。
-4. 点「开始演奏」，脚本自动按曲谱注入 1-7 键与左/右键。
-5. 点「停止」中断；演奏结束自动停止。
-- 若升降音不生效：到「设置」页切换「键-点击顺序」再试。
+4. 点「开始演奏」或按 F5，脚本自动按曲谱注入 z–m 与中键半音。
+5. 点「停止」或按 F6 中断；演奏结束自动停止。
+- 若升降音不生效：到「设置」页切换「键-中键顺序」再试。
 - 若无任何反应：到「设置」把输入后端改为 keyboard_ctypes，并以管理员身份运行 exe。
 
 ## 4. 简谱记法
-- 1 2 3 4 5 6 7 = do re mi fa sol la ti
-- #1 #3 ... 升（左键修饰）；b3 b6 ... 降（右键修饰，b 小写）
+- 1 2 3 4 5 6 7 = do re mi fa sol la ti（演奏键 z x c v b n m）
+- #1 #3 ... 升；b3 b6 ... 降（演奏时均为：按住中键 + 字母）
 - 1^ 1, 高/低八度标记（仅用于音域校验，口琴无八度键，会警告）
 - - 延长前音符一拍（可连用，如 5 - - = 三拍）
 - . 附点（时值 ×1.5）；_ 减时（时值 ×0.5，可连用）
@@ -485,7 +547,7 @@ class App:
 
 - C 模式：零风险（不注入任何输入，仅显示提示）。
 - B 模式：高风险（Python 直接注入键鼠，明令禁止）。
-- E 模式：中风险（G HUB 是 ACE 已知监控对象，运行含宏的 G HUB 即有被标记先例）。
+- E 模式：中风险（手写/驱动宏仍可能被监控；旧 G HUB Lua 路径已弃用）。
 - 人性化抖动只能降低、不能消除检测概率。
 - 本工具不读写游戏内存/封包、不绕过 ACE，仅供彩蛋娱乐，严禁用于竞技场景。
 
@@ -493,6 +555,7 @@ class App:
 - 配置保存在 %APPDATA%\\佐拉口琴谱伴\\settings.json
 - 运行异常写入 %APPDATA%\\佐拉口琴谱伴\\error.log（便于 exe 排错）
 - 命令行：python -m harmonica --score path --mode C
+- 全局热键默认 F5 开始 / F6 停止，可在「设置」修改
 """
 
     def _on_mode_change(self) -> None:
@@ -532,6 +595,21 @@ class App:
         self.cfg.last_score = self.score_text.get("1.0", "end")
         cfgmod.save(self.cfg)
 
+    def _fill_warn_text(self, lines) -> None:
+        """写入警告区；无内容时保持矮高度，有警告时略增高。"""
+        if not hasattr(self, "warn_text"):
+            return
+        self.warn_text.configure(state="normal")
+        self.warn_text.delete("1.0", "end")
+        if lines:
+            self.warn_text.insert("end", "\n".join(lines) + "\n")
+            self.warn_text.configure(height=72)
+            self._warn_has_content = True
+        else:
+            self.warn_text.configure(height=42)
+            self._warn_has_content = False
+        self.warn_text.configure(state="disabled")
+
     def _set_status(self, msg: str) -> None:
         if hasattr(self, "status_label"):
             self.status_label.configure(text=msg)
@@ -543,16 +621,15 @@ class App:
         except parser.ParseError as e:
             messagebox.showerror("曲谱错误", str(e))
             return None
-        self.warn_text.configure(state="normal")
-        self.warn_text.delete("1.0", "end")
         if result.bpm_override:
             self.bpm_var.set(result.bpm_override)
             self.cfg.timing.bpm = result.bpm_override
             self.cfg.timing.beat_seconds = 60.0 / result.bpm_override
+        lines = []
         for idx, msg in result.warnings:
             tag = "[" + str(idx) + "] " if idx >= 0 else ""
-            self.warn_text.insert("end", tag + msg + "\n")
-        self.warn_text.configure(state="disabled")
+            lines.append(tag + msg)
+        self._fill_warn_text(lines)
         self.current_events = result.events
         self.progress.set(0)
         return result
@@ -581,7 +658,7 @@ class App:
             return
         mode = self.cfg.mode
         if mode == "E":
-            self._on_export_ghub()
+            self._on_export_macro_md()
             return
         if mode == "B" and not self.cfg.risk_acknowledged:
             if not messagebox.askyesno("风险确认",
@@ -612,7 +689,7 @@ class App:
                                                on_progress=self._on_progress)
             self.dispatcher.play_c(r.events)
             self._set_playing(True)
-            self._set_status("C 模式提示中… 照提示自己按键")
+            self._set_status("C 模式提示中… 照提示按 z–m，半音按住中键（F6 可停）")
 
     def _on_test_run(self) -> None:
         if self.dispatcher is not None and self.dispatcher.is_running():
@@ -662,35 +739,164 @@ class App:
             if self.hud is not None:
                 self.hud.update_note("休止", idx, total, beats=ev.beats, is_rest=True)
         else:
-            acc = {1: "♯", -1: "♭", 0: ""}[ev.accidental]
-            octv = "^" * ev.octave if ev.octave > 0 else "," * (-ev.octave)
-            text = acc + str(ev.degree) + octv
+            hint = self._format_play_hint(ev)
             color = C_WARN if ev.accidental != 0 else C_ACCENT
-            self.current_note_label.configure(text=text, text_color=color)
+            self.current_note_label.configure(text=hint, text_color=color)
             self.beat_label.configure(text=str(ev.beats) + " 拍")
             if self.hud is not None:
-                self.hud.update_note(text, idx, total, beats=ev.beats,
+                self.hud.update_note(hint, idx, total, beats=ev.beats,
                                      accidental=ev.accidental, is_rest=False)
 
     def _toggle_hud(self) -> None:
         if self.hud is None or not self.hud.exists():
             self.hud = HUDOverlay(self.root)
-            self.hud_btn.configure(text="🖥  隐藏 HUD 覆盖层")
+            self.hud_btn.configure(text="🖥 隐藏覆盖层")
         else:
             self.hud.destroy()
             self.hud = None
-            self.hud_btn.configure(text="🖥  显示 HUD 覆盖层")
+            self.hud_btn.configure(text="🖥 显示覆盖层")
 
     def _update_primary_button(self) -> None:
         if not hasattr(self, "primary_btn"):
             return
         m = self.cfg.mode
         if m == "E":
-            self.primary_btn.configure(text="📤  导出 G HUB Lua", command=self._on_export_ghub)
+            self.primary_btn.configure(text="📤  导出宏教程 MD", command=self._on_export_macro_md)
+            # E 模式主按钮即导出，隐藏曲谱文件列里的重复导出行
+            if hasattr(self, "export_md_row"):
+                self.export_md_row.pack_forget()
         else:
             self.primary_btn.configure(text="▶  开始演奏", command=self._on_start)
+            if hasattr(self, "export_md_row") and hasattr(self, "convert_btn"):
+                if not self.export_md_row.winfo_ismapped():
+                    # 插回「转换」行之前
+                    self.export_md_row.pack(fill="x", pady=2, before=self.convert_btn.master)
+
+    def _format_play_hint(self, ev: "parser.NoteEvent") -> str:
+        """手动辅助大字提示：字母键；半音时带中键。"""
+        key = degree_to_key(self.cfg, ev.degree)
+        acc = {1: "♯", -1: "♭", 0: ""}[ev.accidental]
+        if ev.accidental != 0:
+            return "中键+" + key + " " + acc
+        return key
+
+    def _ai_prompt_text(self) -> str:
+        """可复制的 AI 简谱生成提示词（贴合本工具 score_parser 记法）。"""
+        return (
+            "你是简谱助手。请把用户给出的旋律写成「佐拉口琴谱伴」可用的文本简谱。\n"
+            "\n"
+            "【输出格式硬性规则】\n"
+            "1. 只用空白分隔的 token；可多行；可写 // 行注释。\n"
+            "2. 音级只能是 1-7（do-re-mi-fa-sol-la-ti）；休止用 0。\n"
+            "3. 升号写 #1 #3；降号写 b3 b6（b 必须小写，紧贴数字）。\n"
+            "4. 时值修饰（跟在音符后的独立 token）：\n"
+            "   - 延长一拍；可连用（5 - - = 三拍）\n"
+            "   . 附点（×1.5）；_ 减半（×0.5，可连用 __）\n"
+            "5. | 小节线可写但会被忽略；不要输出和弦、歌词、吉他谱。\n"
+            "6. 开头可写 @bpm 90 这类速度；可选 @key C。\n"
+            "7. 八度：^ 高八度、, 低八度仅作标记——口琴无八度键，尽量改编到基础音区 1-7。\n"
+            "8. 半音范围约 b1..#7；超范围请先移调再输出。\n"
+            "\n"
+            "【演奏键位提示（给人类看，不要写进谱面）】\n"
+            "音级 1-7 对应按键 z x c v b n m；升/降演奏时按住鼠标中键再按字母。\n"
+            "\n"
+            "【合法示例（小星星片段）】\n"
+            "@bpm 100\n"
+            "1 1 5 5 6 6 5 -\n"
+            "4 4 3 3 2 2 1 -\n"
+            "\n"
+            "【含升降示例】\n"
+            "@bpm 80\n"
+            "6 1 2 3 - 5 3 2 1 -\n"
+            "3 #4 5 6 5 3 2 1 -\n"
+            "\n"
+            "【请直接输出曲谱正文，不要 markdown 代码围栏，不要解释】\n"
+            "用户旋律/歌名："
+        )
+
+    def _copy_ai_prompt(self) -> None:
+        content = self.ai_prompt_box.get("1.0", "end-1c")
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(content)
+            self.root.update_idletasks()
+            self._set_status("已复制 AI 简谱提示词到剪贴板")
+        except tk.TclError as e:
+            messagebox.showerror("复制失败", str(e))
+
+    def _register_hotkeys(self) -> None:
+        """注册全局开始/停止热键；失败则回退到窗口内 F 键绑定。"""
+        self._unregister_hotkeys()
+        start = (self.cfg.hotkey.start or "f5").strip().lower()
+        stop = (self.cfg.hotkey.stop or "f6").strip().lower()
+        self.cfg.hotkey.start = start
+        self.cfg.hotkey.stop = stop
+        ok = False
+        try:
+            import keyboard as _kb
+            # 用 after 切回主线程，避免 tk 线程问题
+            h1 = _kb.add_hotkey(start, lambda: self.root.after(0, self._hotkey_start))
+            h2 = _kb.add_hotkey(stop, lambda: self.root.after(0, self._hotkey_stop))
+            self._hotkey_handles = [("keyboard", h1), ("keyboard", h2)]
+            ok = True
+        except Exception:
+            ok = False
+        # 窗口内绑定作为兜底（游戏失焦时仍可用）
+        try:
+            self.root.bind_all("<" + start.upper() + ">", lambda e: self._hotkey_start())
+            self.root.bind_all("<" + stop.upper() + ">", lambda e: self._hotkey_stop())
+            self._hotkey_handles.append(("tk", start.upper()))
+            self._hotkey_handles.append(("tk", stop.upper()))
+        except Exception:
+            pass
+        if hasattr(self, "hotkey_hint"):
+            self.hotkey_hint.configure(
+                text="热键  " + start.upper() + " 开始 / " + stop.upper() + " 停止"
+                + (" · 已注册全局" if ok else " · 窗口内有效")
+            )
+        self._set_status(
+            ("全局热键已注册：" if ok else "热键（窗口内）：")
+            + start.upper() + " 开始 / " + stop.upper() + " 停止"
+        )
+
+    def _unregister_hotkeys(self) -> None:
+        handles = getattr(self, "_hotkey_handles", [])
+        for kind, h in handles:
+            try:
+                if kind == "keyboard":
+                    import keyboard as _kb
+                    _kb.remove_hotkey(h)
+                elif kind == "tk":
+                    self.root.unbind_all("<" + str(h) + ">")
+            except Exception:
+                pass
+        self._hotkey_handles = []
+
+    def _apply_hotkeys(self) -> None:
+        start = self.hotkey_start_var.get().strip().lower() or "f5"
+        stop = self.hotkey_stop_var.get().strip().lower() or "f6"
+        # 粗校验：不要占用演奏字母键
+        banned = set("zxcvbnmwasd")
+        if start in banned or stop in banned:
+            messagebox.showwarning("热键冲突", "热键不要使用 z x c v b n m 或 WASD")
+            return
+        self.cfg.hotkey.start = start
+        self.cfg.hotkey.stop = stop
+        self._save_cfg()
+        self._register_hotkeys()
+        messagebox.showinfo("热键", "已应用：" + start.upper() + " 开始 / " + stop.upper() + " 停止")
+
+    def _hotkey_start(self) -> None:
+        # E 模式热键也走导出；播放中忽略开始
+        if self.dispatcher is not None and self.dispatcher.is_running():
+            return
+        self._on_start()
+
+    def _hotkey_stop(self) -> None:
+        self._on_stop()
 
     def _on_convert(self) -> None:
+
         """简谱转换对话框：输入自由格式简谱，转为本工具记法，并可导出脚本可用文本。"""
         win = ctk.CTkToplevel(self.root)
         win.title("简谱转换")
@@ -732,10 +938,14 @@ class App:
             out.configure(state="disabled")
             # 警告提示
             if res.warnings:
-                self.warn_text.configure(state="normal")
+                extra = []
                 for idx, msg in res.warnings:
-                    self.warn_text.insert("end", ("[" + str(idx) + "] " if idx >= 0 else "") + msg + "\n")
-                self.warn_text.configure(state="disabled")
+                    extra.append(("[" + str(idx) + "] " if idx >= 0 else "") + msg)
+                # 追加到现有警告（转换场景）并增高
+                self.warn_text.configure(state="normal")
+                cur = self.warn_text.get("1.0", "end-1c").strip()
+                merged = ([cur] if cur else []) + extra
+                self._fill_warn_text(merged)
 
         def do_apply():
             text = src.get("1.0", "end")
@@ -774,34 +984,38 @@ class App:
                       fg_color=C_CARD_HI, hover_color="#3a5044", text_color=C_TEXT,
                       command=do_export).pack(side="left", expand=True, fill="x", padx=(4, 0))
 
-    def _on_export_ghub(self) -> None:
+    def _on_export_macro_md(self) -> None:
         r = self._parse_current()
         if r is None or not r.events:
             self._set_status("无事件可导出")
             return
         path = filedialog.asksaveasfilename(
-            defaultextension=".lua", filetypes=[("Lua 脚本", "*.lua"), ("所有文件", "*.*")],
-            initialfile="harmonica_score.lua",
-            title="保存 G HUB Lua 脚本",
+            defaultextension=".md",
+            filetypes=[("Markdown 教程", "*.md"), ("所有文件", "*.*")],
+            initialfile="harmonica_macro.md",
+            title="保存鼠标宏手写教程 (Markdown)",
         )
         if not path:
             return
+        song = os.path.splitext(os.path.basename(path))[0]
         try:
-            ghub_exporter.export_to_file(r.events, self.cfg, path,
-                                          song_name=os.path.splitext(os.path.basename(path))[0])
+            macro_md_exporter.export_to_file(r.events, self.cfg, path, song_name=song)
         except OSError as e:
             messagebox.showerror("导出失败", str(e))
             return
-        self._set_status("已导出: " + path)
+        self._set_status("已导出宏教程: " + path)
         messagebox.showinfo("导出完成",
-            "Lua 脚本已保存到:\n" + path + "\n\n"
-            "导入步骤:\n"
-            "1. 打开罗技 G HUB，选择你的鼠标/键盘\n"
-            "2. 进入 配置 → 脚本（Script）\n"
-            "3. 粘贴该 .lua 文件内容到脚本编辑器\n"
-            "4. 绑定到 G 键或鼠标侧键\n"
-            "5. 对局中先呼出口琴演奏界面，再按该键回放\n\n"
-            "风险提示: G HUB 是反作弊已知监控对象，使用风险自负。")
+            "鼠标宏 Markdown 教程已保存到:\n" + path + "\n\n"
+            "用法:\n"
+            "1. 用任意编辑器打开 .md\n"
+            "2. 按键位表与逐音动作表，在鼠标驱动里手写宏\n"
+            "3. 普通音：按下字母 z–m；半音：按住中键 + 字母\n"
+            "4. 绑到侧键，安全区呼出口琴后再触发\n\n"
+            "旧版 G HUB Lua 导出已弃用。宏仍有封号风险，后果自负。")
+
+    # 兼容旧按钮名（若有外部引用）
+    def _on_export_ghub(self) -> None:
+        self._on_export_macro_md()
 
     def _on_load_file(self) -> None:
         path = filedialog.askopenfilename(
@@ -852,6 +1066,7 @@ class App:
         self.score_text.insert("1.0", sample)
 
     def _on_close(self) -> None:
+        self._unregister_hotkeys()
         if self.hud is not None:
             self.hud.destroy()
             self.hud = None
@@ -893,7 +1108,7 @@ class HUDOverlay:
         x = max(0, sw - 280)
         self.win.geometry("+%d+60" % x)
 
-        self.note_label = tk.Label(self.win, text="—", font=("Segoe UI", 56, "bold"),
+        self.note_label = tk.Label(self.win, text="—", font=("Segoe UI", 36, "bold"),
                                    fg="#00e5ff", bg=self._BG)
         self.note_label.pack(padx=26, pady=(20, 2))
 

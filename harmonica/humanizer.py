@@ -5,9 +5,9 @@
 
 提供两类输出：
   1. Python 端（B 模式 dispatcher 使用）：humanize_duration / humanize_gap / humanize_hold
-  2. Lua 端片段（E 模式 ghub_exporter 使用）：render_lua_jitter，生成等价的抖动表达式
+  2. 时序数值亦供 E 模式鼠标宏 Markdown 教程参考（macro_md_exporter）
 
-B 端与 E 端共用同一组 HumanizeConfig 数值，保证两条链路行为一致。
+B 端注入与 E 端教程共用同一组 HumanizeConfig 数值，便于对照手写宏。
 """
 from __future__ import annotations
 
