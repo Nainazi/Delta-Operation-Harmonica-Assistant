@@ -7,6 +7,10 @@
 
 ## 更新日志
 
+### v1.0.6
+- **管理员提示**：B 模式若当前进程不是管理员，演奏页显示横幅，开始时再警告一次：「请以管理员身份运行；游戏若也是管理员启动则必须一致」。可点「以管理员身份重启」（只弹出一次 UAC，取消则保持当前窗口，不会循环）。
+- 这是常见的「游戏里自动注入没反应」原因：游戏提权后，未提权的辅助进程按键到不了游戏。
+
 ### v1.0.5
 - **自动注入修复**：B 模式不再在缺库时静默落到空后端（看起来在演奏、实际不发 z–m / 中键）。首选 `pydirectinput`，失败则回退 `keyboard_ctypes`。
 - **一键安装**：源码运行若仍缺库，弹出依赖说明（含失败原因）和「一键安装」按钮（`python -m pip install pydirectinput keyboard`），装完自动重试；取消则不开始注入。
@@ -105,7 +109,7 @@
 A: 口琴只有基础音区（约一个半八度），带 `^`（高八度）或 `,`（低八度）的音符会吹成基础音区，这是道具本身限制。底部警告区会标出超范围音符，你需要换调或改编。
 
 **Q: B 模式按了没反应？**
-A: 状态栏应显示 `B 模式播放中（pydirectinput）` 或 `keyboard_ctypes`。若弹出「需要安装注入依赖」，点 **一键安装**（或手动 `pip install pydirectinput keyboard`）。游戏窗口必须在最前；仍无按键时以管理员运行，或到「设置」改成 `keyboard_ctypes`。
+A: 先确认本工具与游戏的管理员权限一致——游戏若以管理员启动，本工具也必须是。未提权时会显示横幅并可「以管理员身份重启」。状态栏应显示 `B 模式播放中（pydirectinput）` 或 `keyboard_ctypes`。若弹出「需要安装注入依赖」，点 **一键安装**（或手动 `pip install pydirectinput keyboard`）。游戏窗口必须在最前；仍无按键时可到「设置」改成 `keyboard_ctypes`。
 
 **Q: 曲子太长，想慢点/快点？**
 A: 「设置」里调 BPM，或在曲谱开头写 `@bpm 120`。
@@ -142,6 +146,7 @@ harmonica/
   score_convert.py     简谱格式转换（连写/括号/点八度 → 本工具记法）
   humanizer.py         时序抖动（降低检测概率）
   input_backend.py     键鼠注入后端（pydirectinput / keyboard / null）
+  admin_check.py        Windows 管理员检测与（可选）提权重启
   dispatcher.py        播放调度（B 注入 / C 提示）
   macro_md_exporter.py 导出鼠标宏 Markdown 教程（多驱动模板）
   ghub_exporter.py     [已弃用] 转发到 macro_md_exporter
