@@ -61,7 +61,8 @@ def build_play_page(app: "App") -> ctk.CTkFrame:
         ("B", "自动注入", "脚本自动模拟 z–m 键与中键半音，违反游戏 ToS")]:
         rb = ctk.CTkRadioButton(
             top, text=desc, variable=app.mode_var, value=m,
-            command=app._on_mode_change,
+            # 把选中值直接传给 handler，避免个别 CTk 版本 command 早于 variable 更新
+            command=lambda selected=m: app._on_mode_change(selected),
             font=ctk.CTkFont(family="Segoe UI", size=12),
             text_color=C_TEXT, fg_color=C_ACCENT)
         rb.pack(side="left", padx=8)

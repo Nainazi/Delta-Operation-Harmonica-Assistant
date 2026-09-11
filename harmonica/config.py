@@ -13,7 +13,7 @@ from typing import Dict, Any, List
 
 # ---- 中性命名，规避反作弊内存关键词扫描（见计划缓解措施 3）----
 APP_NAME = "佐拉口琴谱伴"
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 
 # 默认音级 → 键盘映射：1→z 2→x 3→c 4→v 5→b 6→n 7→m
 DEFAULT_KEY_MAP: Dict[int, str] = {
@@ -155,6 +155,12 @@ class AppConfig:
         cfg.recent = [str(x) for x in recent] if isinstance(recent, list) else []
         tpl = str(d.get("md_template", "generic") or "generic")
         cfg.md_template = tpl if tpl in MD_TEMPLATES else "generic"
+        # 旧后端名 keyboard / ctypes → 设置页选项 keyboard_ctypes
+        b = str(getattr(cfg.input, "backend", "") or "").strip().lower()
+        if b in ("keyboard", "ctypes"):
+            cfg.input.backend = "keyboard_ctypes"
+        elif b not in ("pydirectinput", "keyboard_ctypes", "null"):
+            cfg.input.backend = "pydirectinput"
         return cfg
 
 

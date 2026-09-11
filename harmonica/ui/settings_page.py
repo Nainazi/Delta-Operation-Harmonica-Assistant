@@ -140,16 +140,17 @@ def build_settings_page(app: "App") -> ctk.CTkScrollableFrame:
     bb = ctk.CTkOptionMenu(
         bf, variable=app.backend_var,
         values=["pydirectinput", "keyboard_ctypes", "null"],
+        command=app._on_backend_change,
         fg_color=C_CARD_HI, button_color=C_CARD_HI,
         button_hover_color="#3a3c50", text_color=C_TEXT,
         dropdown_fg_color="#1a2126", dropdown_text_color=C_TEXT,
         dropdown_hover_color=C_CARD_HI)
     bb.pack(anchor="w", padx=16)
     app.backend_var.trace_add("write", lambda *_: app._on_backend_change())
-    ToolTip(bb, "pydirectinput=DirectInput（默认）；keyboard_ctypes=备选；null=不注入（测试）")
+    ToolTip(bb, "pydirectinput=DirectInput（默认）；keyboard_ctypes=备选；null=不注入（测试）。B 模式若后端缺失会报错并拒绝开始，不会假装演奏。")
     ctk.CTkLabel(
-        bf, text="keyboard 注入需以管理员身份运行 exe", text_color=C_TEXT_DIM,
-        font=ctk.CTkFont(family="Segoe UI", size=10)).pack(anchor="w", padx=16, pady=(8, 12))
+        bf, text="keyboard 注入需以管理员身份运行 exe。后端库缺失时自动注入会弹窗报错，而不是空跑。",
+        text_color=C_TEXT_DIM, font=ctk.CTkFont(family="Segoe UI", size=10)).pack(anchor="w", padx=16, pady=(8, 12))
 
     # 新手向导
     wz = make_card(page, "新手向导")

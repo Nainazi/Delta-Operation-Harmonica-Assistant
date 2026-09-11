@@ -265,8 +265,21 @@ class App:
             pass
 
     # ---- settings handlers ----
-    def _on_mode_change(self) -> None:
-        self.cfg.mode = self.mode_var.get()
+    def _sync_mode_from_ui(self) -> str:
+        """以演奏页单选项为源，写回 cfg.mode。返回 C/B/E。"""
+        if hasattr(self, "mode_var"):
+            m = (self.mode_var.get() or "").strip().upper()
+            if m in ("C", "B", "E"):
+                self.cfg.mode = m
+        return self.cfg.mode
+
+    def _on_mode_change(self, selected: Optional[str] = None) -> None:
+        if selected in ("C", "B", "E"):
+            self.cfg.mode = selected
+            if hasattr(self, "mode_var") and self.mode_var.get() != selected:
+                self.mode_var.set(selected)
+        else:
+            self._sync_mode_from_ui()
         self._update_primary_button()
         self._save_cfg()
 
@@ -294,8 +307,15 @@ class App:
         self.cfg.timing.key_before_click = self.key_first_var.get()
         self._save_cfg()
 
-    def _on_backend_change(self) -> None:
-        self.cfg.input.backend = self.backend_var.get()
+    def _on_backend_change(self, value: Optional[str] = None) -> None:
+        raw = value if value is not None else (
+            self.backend_var.get() if hasattr(self, "backend_var") else self.cfg.input.backend)
+        name = (raw or "").strip().lower()
+        if name in ("keyboard", "ctypes"):
+            name = "keyboard_ctypes"
+        if name not in ("pydirectinput", "keyboard_ctypes", "null"):
+            return
+        self.cfg.input.backend = name
         self._save_cfg()
 
     def _save_cfg(self) -> None:
@@ -357,11 +377,29 @@ class App:
         except Exception:
             pass
 
+    def _on_dispatch_error(self, exc: BaseException) -> None:
+        """dispatcher 线程回调：转回主线程提示，避免 B 模式静默中断。"""
+        msg = str(exc) or exc.__class__.__name__
+
+        def _ui() -> None:
+            self._set_playing(False)
+            self._set_status("自动注入失败：" + msg)
+            self._fill_warn_text(["自动注入失败：" + msg])
+            messagebox.showerror(
+                "自动注入失败",
+                msg + "\n\n可到「设置」切换输入后端，或以管理员身份运行。\n"
+                "并确认游戏窗口保持聚焦。")
+
+        try:
+            self.root.after(0, _ui)
+        except Exception:
+            pass
+
     def _on_start(self) -> None:
         if self.dispatcher is not None and self.dispatcher.is_running():
             self._set_status("正在播放中，请先停止")
             return
-        mode = self.cfg.mode
+        mode = self._sync_mode_from_ui()
         if mode == "E":
             self._on_export_macro_md()
             return
@@ -381,14 +419,30 @@ class App:
             return
 
         if mode == "B":
-            be = backend_mod.create_backend(self.cfg.input)
-            if be.name == "null" and self.cfg.input.backend != "null":
-                self._set_status("警告：输入后端库缺失，回退空后端（不会真正注入）")
+            try:
+                be, note = backend_mod.resolve_backend(self.cfg.input, require_real=True)
+            except backend_mod.BackendUnavailable as e:
+                self._set_status("自动注入未启动：输入后端不可用")
+                self._fill_warn_text([str(e)])
+                messagebox.showerror("输入后端不可用", str(e))
+                return
+            if be.name == "null":
+                # require_real 已禁止；双保险，绝不带着空 stub 假装在注入
+                self._set_status("自动注入未启动：后端为空")
+                messagebox.showerror(
+                    "输入后端不可用",
+                    "未能创建真实输入后端，自动注入不会发送 z–m / 中键。")
+                return
             self.dispatcher = disp.Dispatcher(
-                self.cfg, backend=be, on_progress=self._on_progress)
+                self.cfg, backend=be, on_progress=self._on_progress,
+                on_error=self._on_dispatch_error)
             self.dispatcher.play_b(r.events)
             self._set_playing(True)
-            self._set_status("B 模式播放中… 切到游戏窗口保持聚焦")
+            status = "B 模式播放中（%s）… 切到游戏窗口保持聚焦" % be.name
+            if note:
+                status = note + " · " + status
+                self._fill_warn_text([note])
+            self._set_status(status)
         else:
             self.dispatcher = disp.Dispatcher(
                 self.cfg, backend=backend_mod.NullBackend(),

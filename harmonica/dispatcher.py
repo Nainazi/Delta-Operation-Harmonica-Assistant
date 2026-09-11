@@ -16,7 +16,7 @@ import threading
 import time
 from typing import Callable, Optional, List
 
-from .config import AppConfig
+from .config import AppConfig, DEFAULT_KEY_MAP
 from .humanizer import humanize_event
 from .input_backend import InputBackend, NullBackend
 from .score_parser import NoteEvent
@@ -32,20 +32,24 @@ except Exception:
     _HAS_WINMM = False
 
 
-ProgressCallback = Callable[[int, int, NoteEvent], None]
+ProgressCallback = Callable[[int, int, Optional[NoteEvent]], None]
+ErrorCallback = Callable[[BaseException], None]
 
 
 class Dispatcher:
     """调度器：B 注入 / C 提示。"""
 
     def __init__(self, cfg: AppConfig, backend: Optional[InputBackend] = None,
-                 on_progress: Optional[ProgressCallback] = None) -> None:
+                 on_progress: Optional[ProgressCallback] = None,
+                 on_error: Optional[ErrorCallback] = None) -> None:
         self.cfg = cfg
         self.backend: InputBackend = backend if backend is not None else NullBackend()
         self.on_progress = on_progress
+        self.on_error = on_error
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._winmm_acquired = False
+        self.last_error: Optional[BaseException] = None
 
     # ---- 生命周期 ----
     def play_b(self, events: List[NoteEvent]) -> None:
@@ -77,10 +81,23 @@ class Dispatcher:
         self._thread.start()
 
     def _run(self, events: List[NoteEvent], inject: bool) -> None:
+        self.last_error = None
         self._begin_period()
         try:
             self._dispatch(events, inject)
+        except Exception as e:
+            self.last_error = e
+            if self.on_error is not None:
+                try:
+                    self.on_error(e)
+                except Exception:
+                    pass
         finally:
+            try:
+                # 异常中断时不要把中键留在按下状态
+                self.backend.middle_up()
+            except Exception:
+                pass
             self._end_period()
             if self.on_progress is not None:
                 # 播放结束信号：传 None 让 GUI 复位
@@ -127,6 +144,15 @@ class Dispatcher:
             cursor += timing.duration_s
             self._sleep_until(start + cursor)
 
+    def _resolve_key(self, degree: int) -> str:
+        km = self.cfg.input.key_map or {}
+        raw = km.get(degree)
+        if raw is None:
+            raw = km.get(str(degree))  # type: ignore[arg-type]
+        if not raw:
+            raw = DEFAULT_KEY_MAP.get(degree, str(degree))
+        return str(raw).strip().lower()
+
     def _inject_note(self, ev: NoteEvent, hold_ms: int) -> None:
         """发送字母键；半音（♯/♭）时按住中键同时按键。
 
@@ -134,7 +160,7 @@ class Dispatcher:
         key_before_click=True：先按字母，再短按中键（兼容旧手感）。
         """
         cfg = self.cfg
-        key = cfg.input.key_map.get(ev.degree, str(ev.degree))
+        key = self._resolve_key(ev.degree)
         need_middle = ev.accidental != 0
 
         if not need_middle:
@@ -145,8 +171,10 @@ class Dispatcher:
             # 兼容：键 → 中键点按
             self.backend.press_key(key, hold_ms)
             self.backend.middle_down()
-            time.sleep(max(0.015, hold_ms / 1000.0))
-            self.backend.middle_up()
+            try:
+                time.sleep(max(0.015, hold_ms / 1000.0))
+            finally:
+                self.backend.middle_up()
         else:
             # 推荐：按住中键吹半音
             self.backend.middle_down()
