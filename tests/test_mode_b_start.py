@@ -25,8 +25,14 @@ def _install_gui_stubs() -> None:
     tk.Label = object
     tk.Text = object
     sys.modules["tkinter"] = tk
+    mb = types.ModuleType("tkinter.messagebox")
+    mb.askyesno = lambda *a, **k: True
+    mb.askokcancel = lambda *a, **k: True
+    mb.showinfo = lambda *a, **k: None
+    mb.showerror = lambda *a, **k: None
+    mb.showwarning = lambda *a, **k: None
+    sys.modules["tkinter.messagebox"] = mb
     sys.modules["tkinter.filedialog"] = types.ModuleType("tkinter.filedialog")
-    sys.modules["tkinter.messagebox"] = types.ModuleType("tkinter.messagebox")
     sys.modules["tkinter.ttk"] = types.ModuleType("tkinter.ttk")
     sys.modules["customtkinter"] = types.ModuleType("customtkinter")
 
@@ -89,6 +95,7 @@ class ModeBStartTests(unittest.TestCase):
         app._mode_radios = []
         app._warn_has_content = False
         app.root = MagicMock()
+        app._confirm_b_elevation = lambda: True
         return app
 
     def test_start_b_aborts_when_backend_missing(self) -> None:
@@ -178,6 +185,103 @@ class ModeBStartTests(unittest.TestCase):
         app._update_primary_button()
         kwargs = app.primary_btn.configure.call_args.kwargs
         self.assertEqual(kwargs.get("command"), app._on_export_macro_md)
+
+
+class AdminWarningOnStartTests(unittest.TestCase):
+    def _bare_app(self) -> App:
+        app = App.__new__(App)
+        app.cfg = AppConfig()
+        app.cfg.mode = "B"
+        app.cfg.risk_acknowledged = True
+        app.mode_var = _FakeVar("B")
+        app.dispatcher = None
+        app.score_text = MagicMock()
+        app.score_text.get.return_value = "1 2 3\n"
+        app.progress = MagicMock()
+        app.status_label = MagicMock()
+        app.warn_text = MagicMock()
+        app.bpm_var = MagicMock()
+        app.primary_btn = MagicMock()
+        app.test_btn = MagicMock()
+        app._mode_radios = []
+        app._warn_has_content = False
+        app.root = MagicMock()
+        app.admin_banner = MagicMock()
+        return app
+
+    def test_unelevated_cancel_aborts_start(self) -> None:
+        app = self._bare_app()
+        with patch("harmonica.ui.app.admin_check.should_warn_unelevated", return_value=True), \
+             patch("harmonica.ui.app.messagebox.askokcancel", return_value=False) as ask:
+            app._on_start()
+        self.assertIsNone(app.dispatcher)
+        self.assertTrue(ask.called)
+        self.assertIn("管理员", str(ask.call_args))
+
+    def test_unelevated_ok_still_starts(self) -> None:
+        app = self._bare_app()
+        fake = MagicMock()
+        fake.name = "pydirectinput"
+        fake.warning = None
+        app._ensure_inject_backend = lambda: fake
+        captured = {}
+
+        def fake_dispatcher(cfg, backend=None, on_progress=None, on_error=None):
+            captured["backend"] = backend
+            d = MagicMock()
+            d.play_b = MagicMock()
+            d.is_running = MagicMock(return_value=False)
+            return d
+
+        with patch("harmonica.ui.app.admin_check.should_warn_unelevated", return_value=True), \
+             patch("harmonica.ui.app.messagebox.askokcancel", return_value=True) as ask, \
+             patch("harmonica.ui.app.disp.Dispatcher", side_effect=fake_dispatcher):
+            app._on_start()
+        ask.assert_called_once()
+        app.dispatcher.play_b.assert_called_once()
+        self.assertEqual(captured["backend"].name, "pydirectinput")
+        self.assertIn("管理员", str(app.status_label.configure.call_args))
+
+    def test_elevated_skips_admin_dialog(self) -> None:
+        app = self._bare_app()
+        app._ensure_inject_backend = lambda: None
+        with patch("harmonica.ui.app.admin_check.should_warn_unelevated", return_value=False), \
+             patch("harmonica.ui.app.messagebox.askokcancel") as ask:
+            app._on_start()
+        ask.assert_not_called()
+
+    def test_banner_shown_only_when_b_and_unelevated(self) -> None:
+        app = self._bare_app()
+        app.cfg.mode = "B"
+        with patch("harmonica.ui.app.admin_check.should_warn_unelevated", return_value=True):
+            app._refresh_admin_banner()
+        app.admin_banner.grid.assert_called()
+        with patch("harmonica.ui.app.admin_check.should_warn_unelevated", return_value=False):
+            app._refresh_admin_banner()
+        app.admin_banner.grid_forget.assert_called()
+        app.cfg.mode = "C"
+        app.admin_banner.reset_mock()
+        with patch("harmonica.ui.app.admin_check.should_warn_unelevated", return_value=True):
+            app._refresh_admin_banner()
+        app.admin_banner.grid.assert_not_called()
+        app.admin_banner.grid_forget.assert_called()
+
+    def test_relaunch_uac_cancel_does_not_close(self) -> None:
+        app = self._bare_app()
+        app._on_close = MagicMock()
+        with patch("harmonica.ui.app.admin_check.relaunch_elevated",
+                   return_value=(False, "未获得管理员权限（已取消 UAC 或系统拒绝）。当前窗口保持不变。")), \
+             patch("harmonica.ui.app.messagebox.showinfo") as info:
+            app._on_relaunch_elevated()
+        app._on_close.assert_not_called()
+        info.assert_called_once()
+
+    def test_relaunch_success_closes(self) -> None:
+        app = self._bare_app()
+        app._on_close = MagicMock()
+        with patch("harmonica.ui.app.admin_check.relaunch_elevated", return_value=(True, "")):
+            app._on_relaunch_elevated()
+        app._on_close.assert_called_once()
 
 
 if __name__ == "__main__":

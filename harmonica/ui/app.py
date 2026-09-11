@@ -9,6 +9,7 @@ from typing import Optional, List
 
 import customtkinter as ctk
 
+from .. import admin_check
 from .. import config as cfgmod
 from .. import score_parser as parser
 from .. import score_convert as convert
@@ -65,6 +66,7 @@ class App:
             self.cfg.mode = initial_mode
         self.mode_var.set(self.cfg.mode)
         self._update_primary_button()
+        self._refresh_admin_banner()
 
         root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._show_page("play")
@@ -281,6 +283,7 @@ class App:
         else:
             self._sync_mode_from_ui()
         self._update_primary_button()
+        self._refresh_admin_banner()
         self._save_cfg()
 
     def _on_bpm_change(self) -> None:
@@ -512,6 +515,46 @@ class App:
         win.wait_window()
         return bool(result["ok"])
 
+    def _refresh_admin_banner(self) -> None:
+        """B 模式且未提权时显示横幅；缺控件时静默（便于单测）。"""
+        banner = getattr(self, "admin_banner", None)
+        if banner is None:
+            return
+        show = self.cfg.mode == "B" and admin_check.should_warn_unelevated()
+        try:
+            if show:
+                banner.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 8))
+            else:
+                banner.grid_forget()
+        except Exception:
+            pass
+
+    def _confirm_b_elevation(self) -> bool:
+        """未提权时弹出警告。取消则不开始；确定仍以当前权限继续。不循环 UAC。"""
+        self._refresh_admin_banner()
+        if not admin_check.should_warn_unelevated():
+            return True
+        self._set_status("⚠ " + admin_check.UNELEVATED_HINT)
+        return bool(messagebox.askokcancel(
+            "请以管理员身份运行",
+            admin_check.UNELEVATED_HINT + "\n\n"
+            "若游戏以管理员启动而本工具没有，自动注入会表现为按了没反应。\n"
+            "可关闭后右键「以管理员身份运行」，或点演奏页横幅「以管理员身份重启」"
+            "（只会弹出一次 UAC，取消则保持当前窗口）。\n\n"
+            "点「确定」仍以当前权限继续。",
+        ))
+
+    def _on_relaunch_elevated(self) -> None:
+        """用户主动请求提权重启；UAC 取消时不重试、不退出。"""
+        ok, msg = admin_check.relaunch_elevated()
+        if ok:
+            self._set_status("已请求管理员权限，正在退出当前窗口…")
+            self._on_close()
+            return
+        if msg:
+            self._set_status(msg)
+            messagebox.showinfo("以管理员身份重启", msg)
+
     def _on_start(self) -> None:
         if self.dispatcher is not None and self.dispatcher.is_running():
             self._set_status("正在播放中，请先停止")
@@ -529,6 +572,9 @@ class App:
                 return
             self.cfg.risk_acknowledged = True
             self._save_cfg()
+        if mode == "B" and not self._confirm_b_elevation():
+            self._set_status("已取消自动注入（当前不是管理员）")
+            return
 
         r = self._parse_current()
         if r is None or not r.events:
@@ -546,6 +592,8 @@ class App:
             self.dispatcher.play_b(r.events)
             self._set_playing(True)
             status = "B 模式播放中（%s）… 切到游戏窗口保持聚焦" % be.name
+            if admin_check.should_warn_unelevated():
+                status = "⚠ " + admin_check.UNELEVATED_HINT + " · " + status
             if note:
                 status = note + " · " + status
                 self._fill_warn_text([note])
