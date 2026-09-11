@@ -24,6 +24,18 @@ class RecordingBackend(InputBackend):
     def click_right(self, hold_ms: int = 40) -> None:
         self.events.append(("right", hold_ms))
 
+    def left_down(self) -> None:
+        self.events.append(("left_down",))
+
+    def left_up(self) -> None:
+        self.events.append(("left_up",))
+
+    def right_down(self) -> None:
+        self.events.append(("right_down",))
+
+    def right_up(self) -> None:
+        self.events.append(("right_up",))
+
     def middle_down(self) -> None:
         self.events.append(("middle_down",))
 
@@ -107,6 +119,52 @@ class DispatcherInjectTests(unittest.TestCase):
         d = Dispatcher(cfg, backend=rec)
         d.play_b([ev])
         d.wait(2.0)
+        presses = [e for e in rec.events if e[0] == "press"]
+        self.assertEqual(presses[0][1], "z")
+
+    def test_hold_ms_tracks_note_duration(self) -> None:
+        rec = RecordingBackend()
+        cfg = _fast_cfg()
+        cfg.timing.beat_seconds = 0.4
+        cfg.humanize.press_hold_ms = 20
+        ev = NoteEvent(degree=1, accidental=0, beats=1.0, octave=0)
+        d = Dispatcher(cfg, backend=rec)
+        d.play_b([ev])
+        d.wait(2.0)
+        presses = [e for e in rec.events if e[0] == "press"]
+        self.assertEqual(len(presses), 1)
+        hold = presses[0][2]
+        self.assertGreaterEqual(hold, int(400 * 0.85) - 1)
+        self.assertLessEqual(hold, int(400 * 0.90) + 1)
+        self.assertLess(hold, 400)
+
+    def test_octave_and_accidental_mouse_modifiers(self) -> None:
+        rec = RecordingBackend()
+        cases = [
+            ("1,", ["left_down", "press", "left_up"], "z"),
+            ("1^", ["right_down", "press", "right_up"], "z"),
+            ("1^^", ["right_down", "press", "right_up"], ","),
+            ("#1^^", ["right_down", "middle_down", "press", "middle_up", "right_up"], ","),
+        ]
+        for tok, expected_kinds, key in cases:
+            with self.subTest(tok=tok):
+                rec.events = []
+                ev = parse(tok).events[0]
+                d = Dispatcher(_fast_cfg(), backend=rec)
+                d.play_b([ev])
+                d.wait(2.0)
+                kinds = [e[0] for e in rec.events]
+                self.assertEqual(kinds[:len(expected_kinds)], expected_kinds, rec.events)
+                press = [e for e in rec.events if e[0] == "press"][0]
+                self.assertEqual(press[1], key)
+
+    def test_base_note_does_not_hold_mouse(self) -> None:
+        rec = RecordingBackend()
+        d = Dispatcher(_fast_cfg(), backend=rec)
+        d.play_b(parse("1").events)
+        d.wait(2.0)
+        downs = [e[0] for e in rec.events if e[0].endswith("_down")]
+        self.assertEqual(downs, [])
         presses = [e for e in rec.events if e[0] == "press"]
         self.assertEqual(presses[0][1], "z")
 

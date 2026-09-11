@@ -11,23 +11,29 @@ from __future__ import annotations
 from typing import List, Optional
 
 from .config import (
-    AppConfig, DEFAULT_KEY_MAP, degree_to_key, APP_VERSION,
+    AppConfig, DEFAULT_KEY_MAP, APP_VERSION,
     MD_TEMPLATE_LABELS,
 )
+from .humanizer import HOLD_RATIO_MIN, HOLD_RATIO_MAX, KEYUP_PAD_MS
+from .note_map import format_event_hint, map_event
 from .score_parser import NoteEvent
-
-
-def _acc_label(acc: int) -> str:
-    return {1: "升 ♯", -1: "降 ♭", 0: "还原"}[acc]
 
 
 def _action_for(ev: NoteEvent, cfg: AppConfig) -> str:
     if ev.is_rest:
         return "停吹（休止）"
-    key = degree_to_key(cfg, ev.degree)
-    if ev.accidental != 0:
-        return f"按住 **中键** + 按下 `{key}`（{_acc_label(ev.accidental)}）"
-    return f"按下 `{key}`"
+    return "按住整音：" + format_event_hint(ev, cfg.input.key_map)
+
+
+def _hold_ms(note_ms: int, cfg: AppConfig) -> int:
+    """按键保持 ≈ 时值 85%–90%，不低于 press_hold_ms，并留出抬键间隙。"""
+    floor = max(1, int(cfg.humanize.press_hold_ms))
+    ratio = (HOLD_RATIO_MIN + HOLD_RATIO_MAX) / 2.0
+    hold = int(round(note_ms * ratio))
+    max_hold = int(note_ms) - KEYUP_PAD_MS
+    if max_hold < 1:
+        return max(1, int(note_ms))
+    return max(1, min(max(floor, hold), max_hold))
 
 
 def _ms_for_beats(beats: float, beat_seconds: float) -> int:
@@ -89,7 +95,6 @@ def _pseudocode_block(events: List[NoteEvent], cfg: AppConfig,
                       song_name: str, bpm: float, beat_seconds: float,
                       template: str) -> List[str]:
     lines: List[str] = []
-    hold = max(30, cfg.humanize.press_hold_ms)
 
     if template == "logitech":
         lines.append("## 5. G HUB 风格伪代码（对照手动添加）")
@@ -101,23 +106,19 @@ def _pseudocode_block(events: List[NoteEvent], cfg: AppConfig,
             if ev.is_rest:
                 lines.append(f"Delay {ms}ms              // rest {ev.beats:g} beat(s)")
                 continue
-            key = degree_to_key(cfg, ev.degree)
-            h = min(ms, hold)
+            mapping = map_event(ev, cfg.input.key_map)
+            h = _hold_ms(ms, cfg)
             rem = max(0, ms - h)
-            if ev.accidental != 0:
-                lines.append(f"Mouse Button 2 Down       // Middle")
-                lines.append(f"Key Down \"{key}\"           // {_acc_label(ev.accidental)}{ev.degree}")
-                lines.append(f"Delay {h}ms")
-                lines.append(f"Key Up \"{key}\"")
-                lines.append(f"Mouse Button 2 Up")
-                if rem:
-                    lines.append(f"Delay {rem}ms")
-            else:
-                lines.append(f"Key Down \"{key}\"           // {ev.degree}")
-                lines.append(f"Delay {h}ms")
-                lines.append(f"Key Up \"{key}\"")
-                if rem:
-                    lines.append(f"Delay {rem}ms")
+            ghub_btn = {"left": "1", "right": "3", "middle": "2"}
+            for b in mapping.mouse_buttons:
+                lines.append(f"Mouse Button {ghub_btn[b]} Down       // {b}")
+            lines.append(f"Key Down \"{mapping.key}\"           // {ev.degree}")
+            lines.append(f"Delay {h}ms")
+            lines.append(f"Key Up \"{mapping.key}\"")
+            for b in reversed(list(mapping.mouse_buttons)):
+                lines.append(f"Mouse Button {ghub_btn[b]} Up")
+            if rem:
+                lines.append(f"Delay {rem}ms")
             lines.append("")
         lines.append("```")
     elif template == "razer":
@@ -130,23 +131,18 @@ def _pseudocode_block(events: List[NoteEvent], cfg: AppConfig,
             if ev.is_rest:
                 lines.append(f"DELAY {ms}                // rest {ev.beats:g}")
                 continue
-            key = degree_to_key(cfg, ev.degree)
-            h = min(ms, hold)
+            mapping = map_event(ev, cfg.input.key_map)
+            h = _hold_ms(ms, cfg)
             rem = max(0, ms - h)
-            if ev.accidental != 0:
-                lines.append(f"MOUSE_BUTTON MIDDLE DOWN")
-                lines.append(f"KEYBOARD \"{key}\" DOWN     // {_acc_label(ev.accidental)}{ev.degree}")
-                lines.append(f"DELAY {h}")
-                lines.append(f"KEYBOARD \"{key}\" UP")
-                lines.append(f"MOUSE_BUTTON MIDDLE UP")
-                if rem:
-                    lines.append(f"DELAY {rem}")
-            else:
-                lines.append(f"KEYBOARD \"{key}\" DOWN     // {ev.degree}")
-                lines.append(f"DELAY {h}")
-                lines.append(f"KEYBOARD \"{key}\" UP")
-                if rem:
-                    lines.append(f"DELAY {rem}")
+            for b in mapping.mouse_buttons:
+                lines.append(f"MOUSE_BUTTON {b.upper()} DOWN")
+            lines.append(f"KEYBOARD \"{mapping.key}\" DOWN     // {ev.degree}")
+            lines.append(f"DELAY {h}")
+            lines.append(f"KEYBOARD \"{mapping.key}\" UP")
+            for b in reversed(list(mapping.mouse_buttons)):
+                lines.append(f"MOUSE_BUTTON {b.upper()} UP")
+            if rem:
+                lines.append(f"DELAY {rem}")
             lines.append("")
         lines.append("```")
     else:
@@ -159,23 +155,18 @@ def _pseudocode_block(events: List[NoteEvent], cfg: AppConfig,
             if ev.is_rest:
                 lines.append(f"SLEEP {ms}            // 休止 {ev.beats:g} 拍")
                 continue
-            key = degree_to_key(cfg, ev.degree)
-            if ev.accidental != 0:
-                lines.append(f"MIDDLE DOWN")
-                lines.append(f"KEY DOWN  {key}       // {_acc_label(ev.accidental)}{ev.degree}")
-                lines.append(f"SLEEP     {min(ms, hold)}")
-                lines.append(f"KEY UP    {key}")
-                lines.append(f"MIDDLE UP")
-                rem = max(0, ms - hold)
-                if rem:
-                    lines.append(f"SLEEP     {rem}        // 余下时值")
-            else:
-                lines.append(f"KEY DOWN  {key}       // {ev.degree}")
-                lines.append(f"SLEEP     {min(ms, hold)}")
-                lines.append(f"KEY UP    {key}")
-                rem = max(0, ms - hold)
-                if rem:
-                    lines.append(f"SLEEP     {rem}")
+            mapping = map_event(ev, cfg.input.key_map)
+            h = _hold_ms(ms, cfg)
+            rem = max(0, ms - h)
+            for b in mapping.mouse_buttons:
+                lines.append(f"{b.upper()} DOWN")
+            lines.append(f"KEY DOWN  {mapping.key}       // {ev.degree}")
+            lines.append(f"SLEEP     {h}")
+            lines.append(f"KEY UP    {mapping.key}")
+            for b in reversed(list(mapping.mouse_buttons)):
+                lines.append(f"{b.upper()} UP")
+            if rem:
+                lines.append(f"SLEEP     {rem}        // 余下时值")
             lines.append("")
         lines.append("```")
     lines.append("")
@@ -220,8 +211,9 @@ def render_markdown(events: List[NoteEvent], cfg: AppConfig,
         lines.append(f"| {d} | `{km.get(d, DEFAULT_KEY_MAP[d])}` | {names[d-1]} |")
     lines.append("")
     lines.append(f"- 映射速记：{map_line}")
-    lines.append("- **半音（♯ 升 / ♭ 降）**：按住鼠标**中键**的同时按下对应字母键。")
-    lines.append("- 曲谱里 `#1` / `b3` 仍表示升/降；手上统一动作为「中键 + 字母」。")
+    lines.append("- **半音（♯ 升 / ♭ 降）**：按住鼠标**中键**。")
+    lines.append("- **低八度**：按住**左键**；**高八度**：按住**右键**；最高 do（`1^^`）= 右键 + 逗号 `,`。")
+    lines.append("- 修饰键按住覆盖整个音符，不要点按。")
     lines.append("- 避开 WASD 与数字键，方便边移动边吹（仍建议站桩演奏）。")
     lines.append("")
     lines.append("---")
@@ -232,7 +224,7 @@ def render_markdown(events: List[NoteEvent], cfg: AppConfig,
     lines.append(f"| --- | --- |")
     lines.append(f"| BPM | **{bpm:.1f}** |")
     lines.append(f"| 一拍时长 | **{beat_seconds*1000:.0f} ms**（{beat_seconds:.3f}s） |")
-    lines.append(f"| 建议按键保持 | ~{cfg.humanize.press_hold_ms} ms |")
+    lines.append(f"| 建议按键保持 | 音符时值的约 85%–90%（最短 {cfg.humanize.press_hold_ms} ms） |")
     lines.append(f"| 音符间间隙 | ~{cfg.humanize.inter_note_gap_ms} ms（可微调） |")
     lines.append("")
     lines.append("手写宏时：每个音的「等待」≈ 拍数 × 一拍毫秒；休止只等待不按键。")
@@ -251,7 +243,8 @@ def render_markdown(events: List[NoteEvent], cfg: AppConfig,
             src = "0"
         else:
             acc = {1: "#", -1: "b", 0: ""}[ev.accidental]
-            src = f"{acc}{ev.degree}"
+            octv = "^" * ev.octave if ev.octave > 0 else "," * (-ev.octave)
+            src = f"{acc}{ev.degree}{octv}"
         action = _action_for(ev, cfg)
         ms = _ms_for_beats(ev.beats, beat_seconds)
         lines.append(f"| {i} | `{src}` | {action} | {ev.beats:g} | {ms} |")

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import customtkinter as ctk
 
+from ..admin_check import UNELEVATED_HINT
 from .theme import (
     C_BG, C_CARD, C_CARD_HI, C_TEXT, C_TEXT_DIM, C_ACCENT, C_ACCENT_HOVER,
     C_DANGER, C_WARN, RISK_BANNER, ToolTip, make_card,
@@ -19,7 +20,7 @@ def build_play_page(app: "App") -> ctk.CTkFrame:
     page = ctk.CTkFrame(app.root, fg_color=C_BG, corner_radius=0)
 
     page.grid_columnconfigure(0, weight=1)
-    page.grid_rowconfigure(2, weight=1)
+    page.grid_rowconfigure(3, weight=1)
 
     ctk.CTkLabel(
         page, text=RISK_BANNER, fg_color=C_DANGER, text_color="#ffffff",
@@ -27,8 +28,26 @@ def build_play_page(app: "App") -> ctk.CTkFrame:
         anchor="w", pady=8, padx=12).grid(
             row=0, column=0, sticky="ew", padx=16, pady=(14, 8))
 
+    app.admin_banner = ctk.CTkFrame(page, fg_color="#4a3210", corner_radius=8)
+    admin_row = ctk.CTkFrame(app.admin_banner, fg_color="transparent")
+    admin_row.pack(fill="x", padx=10, pady=8)
+    app.admin_banner_label = ctk.CTkLabel(
+        admin_row, text="⚠ " + UNELEVATED_HINT,
+        text_color=C_WARN, font=ctk.CTkFont(family="Segoe UI", size=12),
+        anchor="w", justify="left", wraplength=760)
+    app.admin_banner_label.pack(side="left", fill="x", expand=True)
+    app.admin_relaunch_btn = ctk.CTkButton(
+        admin_row, text="以管理员身份重启", width=148, height=28, corner_radius=8,
+        fg_color=C_CARD_HI, hover_color="#3a5044", text_color=C_TEXT,
+        font=ctk.CTkFont(family="Segoe UI", size=12),
+        command=app._on_relaunch_elevated)
+    app.admin_relaunch_btn.pack(side="right", padx=(8, 0))
+    ToolTip(
+        app.admin_relaunch_btn,
+        "关闭本窗口并弹出一次 UAC。取消授权则保持当前进程，不会反复弹窗。")
+
     ctrl = ctk.CTkFrame(page, fg_color=C_CARD, corner_radius=14)
-    ctrl.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 10))
+    ctrl.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 10))
     ctrl.grid_columnconfigure(0, weight=1)
 
     def row_action(parent, label, text, cmd, accent=False, tip=None):
@@ -56,9 +75,9 @@ def build_play_page(app: "App") -> ctk.CTkFrame:
     app.mode_var = tk.StringVar(value=app.cfg.mode)
     app._mode_radios = []
     for m, desc, tip in [
-        ("C", "手动辅助", "脚本只显示提示（z x c v b n m + 中键半音），你自己按，不注入"),
-        ("E", "鼠标宏教程", "导出 Markdown 手写鼠标宏教程（新键位 + 中键半音）"),
-        ("B", "自动注入", "脚本自动模拟 z–m 键与中键半音，违反游戏 ToS")]:
+        ("C", "手动辅助", "脚本只显示提示（z–m / ， + 左键低八度 / 右键高八度 / 中键半音），你自己按，不注入"),
+        ("E", "鼠标宏教程", "导出 Markdown 手写鼠标宏教程（含八度鼠标键与中键半音）"),
+        ("B", "自动注入", "脚本自动模拟 z–m / ，与鼠标左右中键。违反游戏 ToS。游戏若以管理员运行，本工具也须以管理员运行。")]:
         rb = ctk.CTkRadioButton(
             top, text=desc, variable=app.mode_var, value=m,
             # 把选中值直接传给 handler，避免个别 CTk 版本 command 早于 variable 更新
@@ -120,7 +139,7 @@ def build_play_page(app: "App") -> ctk.CTkFrame:
         tip="在游戏画面上悬浮一个半透明、点击穿透的当前音符提示窗")
 
     main = ctk.CTkFrame(page, fg_color="transparent")
-    main.grid(row=2, column=0, sticky="nsew", padx=16, pady=(0, 6))
+    main.grid(row=3, column=0, sticky="nsew", padx=16, pady=(0, 6))
     main.grid_columnconfigure(0, weight=3)
     main.grid_columnconfigure(1, weight=2)
     main.grid_rowconfigure(0, weight=1)
@@ -134,7 +153,7 @@ def build_play_page(app: "App") -> ctk.CTkFrame:
     app.score_text.pack(fill="both", expand=True, padx=12, pady=(0, 4))
     ctk.CTkLabel(
         left,
-        text="记法: 1-7 音级(键 z x c v b n m) · #升 b降=按住中键 · ^高 ,低八度 · - . _ · 0休止 · | · // · @bpm",
+        text="记法: 1-7 → z x c v b n m · #/b=中键 · ^=右键高八度 · ,=左键低八度 · 1^^=右键+， · - . _ · 0休止 · | · // · @bpm",
         text_color=C_TEXT_DIM, font=ctk.CTkFont(family="Segoe UI", size=10),
         anchor="w").pack(fill="x", padx=12, pady=(0, 10))
 
@@ -166,7 +185,7 @@ def build_play_page(app: "App") -> ctk.CTkFrame:
     app.ai_prompt_box.configure(state="disabled")
 
     bottom = ctk.CTkFrame(page, fg_color="transparent")
-    bottom.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 12))
+    bottom.grid(row=4, column=0, sticky="ew", padx=16, pady=(0, 12))
 
     strip = ctk.CTkFrame(bottom, fg_color=C_CARD, corner_radius=8)
     strip.pack(fill="x")
@@ -179,7 +198,7 @@ def build_play_page(app: "App") -> ctk.CTkFrame:
     app.current_note_label = ctk.CTkLabel(
         row, text="—",
         font=ctk.CTkFont(family="Segoe UI", size=18, weight="bold"),
-        text_color=C_ACCENT, width=120)
+        text_color=C_ACCENT, width=200)
     app.current_note_label.pack(side="left", padx=(6, 8))
     app.beat_label = ctk.CTkLabel(
         row, text="", text_color=C_TEXT_DIM,

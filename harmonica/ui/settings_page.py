@@ -37,7 +37,7 @@ def build_settings_page(app: "App") -> ctk.CTkScrollableFrame:
         chip.pack(side="left", padx=4)
         app._key_chips[key.lower()] = chip
     ctk.CTkLabel(
-        kp, text="按住鼠标中键 + 上列任一键 = 半音（♯ / ♭）。设置页聚焦时可按物理键高亮（尽力而为）。",
+        kp, text="半音=中键；低八度=左键；高八度=右键；最高 do（1^^）=右键+，。设置页聚焦时可按物理键高亮。",
         text_color=C_TEXT_DIM, font=ctk.CTkFont(family="Segoe UI", size=10),
         anchor="w").pack(fill="x", padx=16, pady=(0, 12))
     page.bind("<FocusIn>", lambda e: app._settings_key_preview_on())
@@ -81,22 +81,27 @@ def build_settings_page(app: "App") -> ctk.CTkScrollableFrame:
         hf, from_=0.0, to=0.30, variable=app.jitter_var,
         command=lambda v: app._on_jitter_change(),
         button_color=C_ACCENT, button_hover_color=C_ACCENT_HOVER)
-    js.pack(fill="x", padx=16, pady=(4, 12))
+    js.pack(fill="x", padx=16, pady=(4, 6))
     ToolTip(js, "0=关闭抖动；建议 5%~15%，过大节奏不稳")
+    ctk.CTkLabel(
+        hf,
+        text="按键保持 ≈ 音符时值的 85%–90%（长音会长按）。press_hold_ms 只是最短按下时间，不是固定脉冲。",
+        text_color=C_TEXT_DIM, font=ctk.CTkFont(family="Segoe UI", size=10),
+        wraplength=640, justify="left", anchor="w").pack(fill="x", padx=16, pady=(0, 12))
 
     # 键-点击顺序
     kf = make_card(page, "键-点击顺序")
     kf.pack(fill="x", padx=16, pady=(0, 10))
     app.key_first_var = tk.BooleanVar(value=app.cfg.timing.key_before_click)
     cb = ctk.CTkCheckBox(
-        kf, text="先按字母键、再点中键（不勾选=先按住中键再按字母，推荐）",
+        kf, text="先按字母键、再点中键（旧选项；B 模式已改为整音按住修饰键，此勾选不再改变注入顺序）",
         variable=app.key_first_var, command=app._on_key_order_change,
         text_color=C_TEXT, fg_color=C_ACCENT,
         font=ctk.CTkFont(family="Segoe UI", size=12))
     cb.pack(anchor="w", padx=16, pady=(6, 8))
-    ToolTip(cb, "半音=按住中键+字母。推荐不勾选（先中键再字母）；若不准可勾选换序")
+    ToolTip(cb, "B 注入顺序固定：鼠标修饰按下 → 字母/逗号按下 → 保持时值 → 抬键 → 抬修饰")
     ctk.CTkLabel(
-        kf, text="演奏键位：1→z  2→x  3→c  4→v  5→b  6→n  7→m｜半音：按住鼠标中键",
+        kf, text="演奏键：1→z … 7→m｜最高 do→，｜左键低八度 · 右键高八度 · 中键半音（均按住整音）",
         text_color=C_TEXT_DIM, font=ctk.CTkFont(family="Segoe UI", size=10),
         anchor="w").pack(fill="x", padx=16, pady=(0, 12))
 
@@ -139,7 +144,7 @@ def build_settings_page(app: "App") -> ctk.CTkScrollableFrame:
     app.backend_var = tk.StringVar(value=app.cfg.input.backend)
     bb = ctk.CTkOptionMenu(
         bf, variable=app.backend_var,
-        values=["pydirectinput", "keyboard_ctypes", "null"],
+        values=["sendinput", "pydirectinput", "keyboard_ctypes", "null"],
         command=app._on_backend_change,
         fg_color=C_CARD_HI, button_color=C_CARD_HI,
         button_hover_color="#3a3c50", text_color=C_TEXT,
@@ -147,9 +152,9 @@ def build_settings_page(app: "App") -> ctk.CTkScrollableFrame:
         dropdown_hover_color=C_CARD_HI)
     bb.pack(anchor="w", padx=16)
     app.backend_var.trace_add("write", lambda *_: app._on_backend_change())
-    ToolTip(bb, "pydirectinput=DirectInput（默认）；keyboard_ctypes=备选；null=不注入（测试）。B 模式若后端缺失会报错并拒绝开始，不会假装演奏。")
+    ToolTip(bb, "sendinput=Windows SendInput 扫描码（默认，游戏内鼠标更稳）；pydirectinput=备选；keyboard_ctypes=再备选；null=不注入。B 模式若后端缺失会报错并拒绝开始。")
     ctk.CTkLabel(
-        bf, text="keyboard 注入需以管理员身份运行 exe。后端库缺失时自动注入会弹窗报错，而不是空跑。",
+        bf, text="sendinput 不需额外库。keyboard 备选需以管理员身份运行。后端库缺失时自动注入会弹窗报错，而不是空跑。",
         text_color=C_TEXT_DIM, font=ctk.CTkFont(family="Segoe UI", size=10)).pack(anchor="w", padx=16, pady=(8, 12))
 
     # 新手向导

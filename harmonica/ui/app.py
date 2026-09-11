@@ -9,6 +9,7 @@ from typing import Optional, List
 
 import customtkinter as ctk
 
+from .. import admin_check
 from .. import config as cfgmod
 from .. import score_parser as parser
 from .. import score_convert as convert
@@ -16,9 +17,10 @@ from .. import dispatcher as disp
 from .. import input_backend as backend_mod
 from .. import macro_md_exporter
 from ..config import (
-    DEFAULT_KEY_MAP, degree_to_key, MD_TEMPLATE_LABELS, MD_TEMPLATES,
+    MD_TEMPLATE_LABELS, MD_TEMPLATES,
     extract_song_title, sanitize_filename,
 )
+from ..note_map import format_event_hint
 
 from .theme import (
     C_BG, C_SIDEBAR, C_CARD, C_CARD_HI, C_TEXT, C_TEXT_DIM, C_ACCENT, C_ACCENT_HOVER,
@@ -65,6 +67,7 @@ class App:
             self.cfg.mode = initial_mode
         self.mode_var.set(self.cfg.mode)
         self._update_primary_button()
+        self._refresh_admin_banner()
 
         root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._show_page("play")
@@ -281,6 +284,7 @@ class App:
         else:
             self._sync_mode_from_ui()
         self._update_primary_button()
+        self._refresh_admin_banner()
         self._save_cfg()
 
     def _on_bpm_change(self) -> None:
@@ -436,7 +440,8 @@ class App:
             text_color=C_ACCENT, anchor="w").pack(fill="x", padx=20, pady=(18, 6))
         ctk.CTkLabel(
             win,
-            text="当前 Python 缺少 pydirectinput 或 keyboard，B 模式不会发送 z–m / 中键。\n"
+            text="当前 Python 缺少 pydirectinput 或 keyboard（备选后端）。\n"
+                 "Windows 下默认 sendinput 通常不需要这些库。\n"
                  "可点「一键安装」执行：python -m pip install pydirectinput keyboard",
             text_color=C_TEXT, font=ctk.CTkFont(family="Segoe UI", size=12),
             wraplength=520, justify="left", anchor="w").pack(fill="x", padx=20)
@@ -512,6 +517,46 @@ class App:
         win.wait_window()
         return bool(result["ok"])
 
+    def _refresh_admin_banner(self) -> None:
+        """B 模式且未提权时显示横幅；缺控件时静默（便于单测）。"""
+        banner = getattr(self, "admin_banner", None)
+        if banner is None:
+            return
+        show = self.cfg.mode == "B" and admin_check.should_warn_unelevated()
+        try:
+            if show:
+                banner.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 8))
+            else:
+                banner.grid_forget()
+        except Exception:
+            pass
+
+    def _confirm_b_elevation(self) -> bool:
+        """未提权时弹出警告。取消则不开始；确定仍以当前权限继续。不循环 UAC。"""
+        self._refresh_admin_banner()
+        if not admin_check.should_warn_unelevated():
+            return True
+        self._set_status("⚠ " + admin_check.UNELEVATED_HINT)
+        return bool(messagebox.askokcancel(
+            "请以管理员身份运行",
+            admin_check.UNELEVATED_HINT + "\n\n"
+            "若游戏以管理员启动而本工具没有，自动注入会表现为按了没反应。\n"
+            "可关闭后右键「以管理员身份运行」，或点演奏页横幅「以管理员身份重启」"
+            "（只会弹出一次 UAC，取消则保持当前窗口）。\n\n"
+            "点「确定」仍以当前权限继续。",
+        ))
+
+    def _on_relaunch_elevated(self) -> None:
+        """用户主动请求提权重启；UAC 取消时不重试、不退出。"""
+        ok, msg = admin_check.relaunch_elevated()
+        if ok:
+            self._set_status("已请求管理员权限，正在退出当前窗口…")
+            self._on_close()
+            return
+        if msg:
+            self._set_status(msg)
+            messagebox.showinfo("以管理员身份重启", msg)
+
     def _on_start(self) -> None:
         if self.dispatcher is not None and self.dispatcher.is_running():
             self._set_status("正在播放中，请先停止")
@@ -529,6 +574,9 @@ class App:
                 return
             self.cfg.risk_acknowledged = True
             self._save_cfg()
+        if mode == "B" and not self._confirm_b_elevation():
+            self._set_status("已取消自动注入（当前不是管理员）")
+            return
 
         r = self._parse_current()
         if r is None or not r.events:
@@ -546,6 +594,8 @@ class App:
             self.dispatcher.play_b(r.events)
             self._set_playing(True)
             status = "B 模式播放中（%s）… 切到游戏窗口保持聚焦" % be.name
+            if admin_check.should_warn_unelevated():
+                status = "⚠ " + admin_check.UNELEVATED_HINT + " · " + status
             if note:
                 status = note + " · " + status
                 self._fill_warn_text([note])
@@ -556,7 +606,7 @@ class App:
                 on_progress=self._on_progress)
             self.dispatcher.play_c(r.events)
             self._set_playing(True)
-            self._set_status("C 模式提示中… 照提示按 z–m，半音按住中键（F6 可停）")
+            self._set_status("C 模式提示中… 照提示按 z–m / ，；左键低八度、右键高八度、中键半音（F6 可停）")
 
     def _on_test_run(self) -> None:
         if self.dispatcher is not None and self.dispatcher.is_running():
@@ -638,11 +688,7 @@ class App:
                     self.export_md_row.pack(fill="x", pady=2, before=self.convert_btn.master)
 
     def _format_play_hint(self, ev: "parser.NoteEvent") -> str:
-        key = degree_to_key(self.cfg, ev.degree)
-        acc = {1: "♯", -1: "♭", 0: ""}[ev.accidental]
-        if ev.accidental != 0:
-            return "中键+" + key + " " + acc
-        return key
+        return format_event_hint(ev, self.cfg.input.key_map)
 
     def _ai_prompt_text(self) -> str:
         return (
@@ -657,11 +703,11 @@ class App:
             "   . 附点（×1.5）；_ 减半（×0.5，可连用 __）\n"
             "5. | 小节线可写但会被忽略；不要输出和弦、歌词、吉他谱。\n"
             "6. 开头可写 @bpm 90 这类速度；可选 @key C。\n"
-            "7. 八度：^ 高八度、, 低八度仅作标记——口琴无八度键，尽量改编到基础音区 1-7。\n"
-            "8. 半音范围约 b1..#7；超范围请先移调再输出。\n"
+            "7. 八度：^ 高八度（按住右键）、, 低八度（按住左键）；1^^ 为最高 do（右键+逗号键）。\n"
+            "8. 半音范围约低八度到最高 do；超范围请先移调再输出。\n"
             "\n"
             "【演奏键位提示（给人类看，不要写进谱面）】\n"
-            "音级 1-7 对应按键 z x c v b n m；升/降演奏时按住鼠标中键再按字母。\n"
+            "音级 1-7 对应 z x c v b n m；# / b 按住中键；^ 按住右键；, 按住左键；最高 do 为右键+，。\n"
             "\n"
             "【合法示例（小星星片段）】\n"
             "@bpm 100\n"

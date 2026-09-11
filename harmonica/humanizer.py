@@ -13,10 +13,15 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from .config import HumanizeConfig
+
+# 按住时长占音符时值的比例；略短于 100% 以便抬键后再接下一个音
+HOLD_RATIO_MIN = 0.85
+HOLD_RATIO_MAX = 0.90
+KEYUP_PAD_MS = 8
 
 
 @dataclass
@@ -49,12 +54,36 @@ def humanize_gap(cfg: "HumanizeConfig", rng: random.Random) -> float:
     return max(0.0, base + jitter)
 
 
-def humanize_hold(cfg: "HumanizeConfig", rng: random.Random) -> int:
-    """按键按下到抬起时长（毫秒）。"""
-    if not cfg.enabled:
-        return max(20, cfg.press_hold_ms)
-    jitter = rng.randint(-cfg.press_hold_jitter_ms, cfg.press_hold_jitter_ms)
-    return max(15, cfg.press_hold_ms + jitter)
+def humanize_hold(
+    cfg: "HumanizeConfig",
+    rng: random.Random,
+    duration_s: Optional[float] = None,
+) -> int:
+    """按键按下到抬起时长（毫秒）。
+
+    传入 duration_s 时：保持 ≈ 音符时值的 85%–90%，且不低于 press_hold_ms
+    （该配置现为最短按下时间，不是唯一脉冲长度），并留出 KEYUP_PAD_MS
+    给抬键、再接下一个音。未传 duration_s 时回退为旧的固定脉冲（宏教程等）。
+    """
+    floor = max(1, int(cfg.press_hold_ms))
+    if duration_s is None:
+        if not cfg.enabled:
+            return max(20, floor)
+        jitter = rng.randint(-cfg.press_hold_jitter_ms, cfg.press_hold_jitter_ms)
+        return max(15, floor + jitter)
+
+    duration_ms = max(0.0, float(duration_s) * 1000.0)
+    if cfg.enabled:
+        ratio = rng.uniform(HOLD_RATIO_MIN, HOLD_RATIO_MAX)
+    else:
+        ratio = (HOLD_RATIO_MIN + HOLD_RATIO_MAX) / 2.0
+    hold = int(round(duration_ms * ratio))
+    max_hold = int(round(duration_ms)) - KEYUP_PAD_MS
+    if max_hold < 1:
+        return max(1, int(round(duration_ms)) if duration_ms >= 1 else 1)
+    hold = max(floor, hold)
+    hold = min(hold, max_hold)
+    return max(1, hold)
 
 
 def humanize_event(beats: float, beat_seconds: float, cfg: "HumanizeConfig",
@@ -62,7 +91,7 @@ def humanize_event(beats: float, beat_seconds: float, cfg: "HumanizeConfig",
     """一次音符的完整时序。first=True 时通常不加前导 gap。"""
     duration = humanize_duration(beats, beat_seconds, cfg, rng)
     gap = 0.0 if first else humanize_gap(cfg, rng)
-    hold = humanize_hold(cfg, rng)
+    hold = humanize_hold(cfg, rng, duration_s=duration)
     return HumanizedTiming(duration_s=duration, gap_s=gap, hold_ms=hold)
 
 
