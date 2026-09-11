@@ -1,8 +1,37 @@
-"""演奏页 mode B 与开始逻辑：同步 mode、拒绝空后端。"""
+"""演奏页 mode B 与开始逻辑：同步 mode、拒绝空后端。
+
+本环境可能没有系统 tkinter；在导入 App 前装入轻量 stub。
+"""
 from __future__ import annotations
 
+import sys
+import types
 import unittest
 from unittest.mock import MagicMock, patch
+
+
+def _install_gui_stubs() -> None:
+    if "tkinter" in sys.modules:
+        return
+    tk = types.ModuleType("tkinter")
+    tk.TclError = type("TclError", (Exception,), {})
+    tk.StringVar = object
+    tk.DoubleVar = object
+    tk.BooleanVar = object
+    tk.Widget = object
+    tk.Misc = object
+    tk.Event = object
+    tk.Toplevel = object
+    tk.Label = object
+    tk.Text = object
+    sys.modules["tkinter"] = tk
+    sys.modules["tkinter.filedialog"] = types.ModuleType("tkinter.filedialog")
+    sys.modules["tkinter.messagebox"] = types.ModuleType("tkinter.messagebox")
+    sys.modules["tkinter.ttk"] = types.ModuleType("tkinter.ttk")
+    sys.modules["customtkinter"] = types.ModuleType("customtkinter")
+
+
+_install_gui_stubs()
 
 from harmonica.config import AppConfig
 from harmonica.input_backend import BackendUnavailable, NullBackend
