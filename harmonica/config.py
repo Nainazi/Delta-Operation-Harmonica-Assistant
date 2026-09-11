@@ -13,7 +13,7 @@ from typing import Dict, Any, List
 
 # ---- 中性命名，规避反作弊内存关键词扫描（见计划缓解措施 3）----
 APP_NAME = "佐拉口琴谱伴"
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 
 # 默认音级 → 键盘映射：1→z 2→x 3→c 4→v 5→b 6→n 7→m
 DEFAULT_KEY_MAP: Dict[int, str] = {
